@@ -20,7 +20,7 @@ public class BoltzServerSettings
     [Range(60, 3600)]
     public uint? LiquidWalletSyncInterval { get; set; }
 
-    [Display(Name = "Boltz API URL")]
+    [Display(Name = "Swap API URL")]
     [Url]
     public string? ApiUrl { get; set; }
 }

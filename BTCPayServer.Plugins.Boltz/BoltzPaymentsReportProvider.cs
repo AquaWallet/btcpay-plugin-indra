@@ -129,7 +129,7 @@ public class BoltzPaymentsReportProvider : ReportProvider
 
                 if (handler is ILightningPaymentHandler)
                 {
-                    values.Add(isBoltzLightningPayment ? "Lightning via Boltz" : "Lightning");
+                    values.Add(isBoltzLightningPayment ? "Lightning via Indra" : "Lightning");
                 }
                 else if (handler is BitcoinLikePaymentHandler)
                 {

@@ -28,7 +28,7 @@ public class GreenfieldBoltzController(
 
 
     private IActionResult BoltzUnavailableError(string? message = null)  {
-        return this.CreateAPIError("boltz-unavailable", message ?? "Boltz daemon is not available, ensure Boltz is properly configured.");
+        return this.CreateAPIError("boltz-unavailable", message ?? "Indra swap client is not available, ensure Indra is properly configured.");
     }
 
     private IActionResult BoltzError(RpcException e) {
@@ -243,7 +243,7 @@ public class GreenfieldBoltzController(
     {
         if (boltzService.IsWalletInUse(storeId, walletId))
         {
-            return this.CreateAPIError("wallet-in-use", "Cannot delete the wallet currently configured for lightning payments. Disable Boltz first or switch to a different wallet.");
+            return this.CreateAPIError("wallet-in-use", "Cannot delete the wallet currently configured for lightning payments. Disable Indra first or switch to a different wallet.");
         }
 
         try

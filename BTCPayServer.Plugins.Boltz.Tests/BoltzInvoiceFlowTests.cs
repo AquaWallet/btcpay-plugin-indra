@@ -208,7 +208,7 @@ namespace BTCPayServer.Plugins.Boltz.Tests
                     data => data[invoiceIdIndex]?.ToString() == invoiceId &&
                             data[paymentMethodIdIndex]?.ToString() == paymentMethodId);
 
-                Assert.Equal("Lightning via Boltz", row[categoryIndex]);
+                Assert.Equal("Lightning via Indra", row[categoryIndex]);
                 Assert.False(string.IsNullOrWhiteSpace(row[swapIdIndex]?.ToString()));
                 Assert.Equal("LBTC", row[settlementCurrencyIndex]);
                 Assert.False(string.IsNullOrWhiteSpace(row[settlementTransactionIdIndex]?.ToString()));

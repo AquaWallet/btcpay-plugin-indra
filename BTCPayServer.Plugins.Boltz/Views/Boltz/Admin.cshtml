@@ -19,14 +19,14 @@
     @if (Daemon.HasError)
     {
         <div class="alert alert-danger">
-            Boltz Client not running: @Daemon.Error
+            Swap client not running: @Daemon.Error
         </div>
         <pre style="max-height: 25rem;">@Daemon.RecentOutput</pre>
     }
     else if (Daemon.Running && Model.Info != null)
     {
         <p>
-            Running Boltz Client @Model.Info.Version
+            Running boltz-client @Model.Info.Version
         </p>
 
         @if (Model.Info.Node != "standalone")
@@ -62,21 +62,21 @@
             <div class="form-group">
                 <label asp-for="ServerSettings.LiquidEsploraConcurrency" class="form-label"></label>
                 <input asp-for="ServerSettings.LiquidEsploraConcurrency" type="number" min="1" max="256" class="form-control" />
-                <div class="form-text">Maximum concurrent Esplora requests used to scan Liquid wallets. Leave empty to use the Boltz Client default, or enter a value from 1 to 256.</div>
+                <div class="form-text">Maximum concurrent Esplora requests used to scan Liquid wallets. Leave empty to use the boltz-client default, or enter a value from 1 to 256.</div>
                 <span asp-validation-for="ServerSettings.LiquidEsploraConcurrency" class="text-danger"></span>
             </div>
 
             <div class="form-group">
                 <label asp-for="ServerSettings.LiquidWalletSyncInterval" class="form-label"></label>
                 <input asp-for="ServerSettings.LiquidWalletSyncInterval" type="number" min="60" max="3600" class="form-control" />
-                <div class="form-text">Interval in seconds between automatic Liquid wallet syncs. Leave empty to use the Boltz Client default, or enter a value from 60 to 3600.</div>
+                <div class="form-text">Interval in seconds between automatic Liquid wallet syncs. Leave empty to use the boltz-client default, or enter a value from 60 to 3600.</div>
                 <span asp-validation-for="ServerSettings.LiquidWalletSyncInterval" class="text-danger"></span>
             </div>
 
             <div class="form-group">
                 <label asp-for="ServerSettings.ApiUrl" class="form-label"></label>
                 <input asp-for="ServerSettings.ApiUrl" type="url" placeholder="@BoltzDaemon.DefaultApiUrl" class="form-control" />
-                <div class="form-text">Base URL of the Boltz-compatible swap API, without the version path. Leave empty to use the Boltz Client default.</div>
+                <div class="form-text">Base URL of the Boltz-compatible swap API, without the version path. Leave empty to use Indra (https://indra.aquabtc.com).</div>
                 <span asp-validation-for="ServerSettings.ApiUrl" class="text-danger"></span>
             </div>
         </div>

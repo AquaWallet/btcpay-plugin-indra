@@ -342,7 +342,7 @@ public class BoltzController(
         }
         catch (Exception e)
         {
-            SetErrorMessage(e, "Error connecting to Boltz");
+            SetErrorMessage(e, "Error connecting to Indra");
         }
 
         return View(data);
@@ -723,7 +723,7 @@ public class BoltzController(
             }
             catch (Exception e)
             {
-                SetErrorMessage(e, "Error connecting to Boltz");
+                SetErrorMessage(e, "Error connecting to Indra");
             }
         }
 
@@ -810,7 +810,7 @@ public class BoltzController(
             case "Clear":
                 {
                     await boltzService.Set(CurrentStoreId!, null);
-                    TempData[WellKnownTempData.SuccessMessage] = "Boltz plugin credentials cleared";
+                    TempData[WellKnownTempData.SuccessMessage] = "Indra plugin credentials cleared";
                     break;
                 }
             case "Start":

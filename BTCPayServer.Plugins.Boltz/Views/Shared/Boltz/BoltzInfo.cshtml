@@ -14,13 +14,13 @@
         {
             <a asp-controller="Boltz" asp-action="Admin" asp-route-storeId="@Context.GetCurrentStoreId()"
                 class="alert alert-danger d-block">
-                Boltz Client not running
+                Indra swap client not running
             </a>
         }
         else
         {
             <div class="alert alert-danger">
-                <p>Boltz Client not running, tell a server admin.</p>
+                <p>Indra swap client not running, tell a server admin.</p>
             </div>
         }
     }
@@ -86,13 +86,13 @@ catch (Exception)
         {
             <a asp-controller="Boltz" asp-action="Admin" asp-route-storeId="@Context.GetCurrentStoreId()"
                 class="alert alert-danger d-block">
-                Boltz connection not working
+                Indra connection not working
             </a>
         }
         else
         {
             <div class="alert alert-danger">
-                <p>Boltz connection not working, tell a server admin.</p>
+                <p>Indra connection not working, tell a server admin.</p>
             </div>
         }
     </div>

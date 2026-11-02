@@ -2,9 +2,9 @@
   "paths": {
     "/api/v1/stores/{storeId}/boltz/setup": {
       "get": {
-        "tags": ["Boltz"],
-        "summary": "Get Boltz setup status",
-        "description": "View the current Boltz configuration status for a store",
+        "tags": ["Indra"],
+        "summary": "Get Indra setup status",
+        "description": "View the current Indra configuration status for a store",
         "operationId": "Boltz_GetSetup",
         "parameters": [
           {
@@ -13,7 +13,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Current Boltz setup status",
+            "description": "Current Indra setup status",
             "content": {
               "application/json": {
                 "schema": {
@@ -37,9 +37,9 @@
         ]
       },
       "post": {
-        "tags": ["Boltz"],
-        "summary": "Enable Boltz for store",
-        "description": "Enable Boltz in standalone mode for a store, using the specified wallet for receiving lightning payments",
+        "tags": ["Indra"],
+        "summary": "Enable Indra for store",
+        "description": "Enable Indra in standalone mode for a store, using the specified wallet for receiving lightning payments",
         "operationId": "Boltz_EnableSetup",
         "parameters": [
           {
@@ -58,7 +58,7 @@
         },
         "responses": {
           "200": {
-            "description": "Boltz enabled successfully",
+            "description": "Indra enabled successfully",
             "content": {
               "application/json": {
                 "schema": {
@@ -68,7 +68,7 @@
             }
           },
           "400": {
-            "description": "A list of errors that occurred when enabling Boltz",
+            "description": "A list of errors that occurred when enabling Indra",
             "content": {
               "application/json": {
                 "schema": {
@@ -99,9 +99,9 @@
         ]
       },
       "delete": {
-        "tags": ["Boltz"],
-        "summary": "Disable Boltz for store",
-        "description": "Disable Boltz for a store",
+        "tags": ["Indra"],
+        "summary": "Disable Indra for store",
+        "description": "Disable Indra for a store",
         "operationId": "Boltz_DisableSetup",
         "parameters": [
           {
@@ -110,7 +110,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Boltz disabled successfully",
+            "description": "Indra disabled successfully",
             "content": {
               "application/json": {
                 "schema": {
@@ -120,7 +120,7 @@
             }
           },
           "400": {
-            "description": "A list of errors that occurred when disabling Boltz",
+            "description": "A list of errors that occurred when disabling Indra",
             "content": {
               "application/json": {
                 "schema": {
@@ -143,9 +143,9 @@
     },
     "/api/v1/stores/{storeId}/boltz/wallets": {
       "get": {
-        "tags": ["Boltz"],
-        "summary": "List Boltz wallets",
-        "description": "List all wallets available in the Boltz daemon for this store",
+        "tags": ["Indra"],
+        "summary": "List Indra wallets",
+        "description": "List all wallets available in the Indra daemon for this store",
         "operationId": "Boltz_ListWallets",
         "parameters": [
           {
@@ -167,7 +167,7 @@
             }
           },
           "400": {
-            "description": "Boltz daemon is not available",
+            "description": "Indra daemon is not available",
             "content": {
               "application/json": {
                 "schema": {
@@ -188,8 +188,8 @@
         ]
       },
       "post": {
-        "tags": ["Boltz"],
-        "summary": "Create or import a Boltz wallet",
+        "tags": ["Indra"],
+        "summary": "Create or import a Indra wallet",
         "description": "Create a new wallet or import an existing one using a mnemonic or Bitcoin Core descriptor",
         "operationId": "Boltz_CreateWallet",
         "parameters": [
@@ -252,9 +252,9 @@
     },
     "/api/v1/stores/{storeId}/boltz/wallets/{walletId}": {
       "delete": {
-        "tags": ["Boltz"],
-        "summary": "Remove a Boltz wallet",
-        "description": "Remove a wallet from the Boltz daemon. Cannot remove the wallet currently configured for lightning payments.",
+        "tags": ["Indra"],
+        "summary": "Remove a Indra wallet",
+        "description": "Remove a wallet from the Indra daemon. Cannot remove the wallet currently configured for lightning payments.",
         "operationId": "Boltz_RemoveWallet",
         "parameters": [
           {
@@ -276,7 +276,7 @@
             "description": "Wallet removed successfully"
           },
           "400": {
-            "description": "Cannot delete the wallet (e.g., it's currently in use or Boltz daemon error)",
+            "description": "Cannot delete the wallet (e.g., it's currently in use or Indra daemon error)",
             "content": {
               "application/json": {
                 "schema": {
@@ -302,7 +302,7 @@
     "schemas": {
       "BoltzSetupRequest": {
         "type": "object",
-        "description": "Request to enable Boltz for a store",
+        "description": "Request to enable Indra for a store",
         "required": ["walletName"],
         "properties": {
           "walletName": {
@@ -313,11 +313,11 @@
       },
       "BoltzSetupData": {
         "type": "object",
-        "description": "Response containing current Boltz setup status",
+        "description": "Response containing current Indra setup status",
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Whether Boltz is enabled for this store"
+            "description": "Whether Indra is enabled for this store"
           },
           "wallet": {
             "nullable": true,
@@ -430,8 +430,8 @@
   },
   "tags": [
     {
-      "name": "Boltz",
-      "description": "Boltz plugin API for non-custodial Lightning payments. Allows enabling Boltz for a store, managing wallets for receiving Lightning payments via atomic swaps."
+      "name": "Indra",
+      "description": "Indra plugin API for non-custodial Lightning payments. Allows enabling Indra for a store, managing wallets for receiving Lightning payments via atomic swaps."
     }
   ]
 }

@@ -558,7 +558,7 @@ public class BoltzService(
 
     public static List<Stat> PairStats(PairInfo pairInfo) =>
     [
-        new() { Name = "Boltz Service Fee", Value = pairInfo.Fees.Percentage, Unit = Unit.Percent },
+        new() { Name = "Indra Service Fee", Value = pairInfo.Fees.Percentage, Unit = Unit.Percent },
         new() { Name = "Network Fee", Value = pairInfo.Fees.MinerFees, Unit = Unit.Sat },
         new() { Name = "Min Amount", Value = pairInfo.Limits.Minimal, Unit = Unit.Sat },
         new() { Name = "Max Amount", Value = pairInfo.Limits.Maximal, Unit = Unit.Sat }
