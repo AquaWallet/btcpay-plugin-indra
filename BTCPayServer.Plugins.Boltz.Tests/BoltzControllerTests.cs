@@ -92,6 +92,17 @@ namespace BTCPayServer.Plugins.Boltz.Tests
             Assert.DoesNotContain("[Boltz]", config);
         }
 
+        [Fact]
+        public void DefaultsToIndraOnMainnet()
+        {
+            var config = BoltzDaemon.BuildConfig(
+                new DaemonConfig(),
+                "mainnet",
+                new Uri("https://127.0.0.1:9002"));
+
+            Assert.Contains("[Boltz]\nurl = \"https://indra.aquabtc.com\"", config.ReplaceLineEndings("\n"));
+        }
+
         private static FileInfo WriteLogFile(DirectoryInfo directory, string fileName, DateTimeOffset lastWriteTime)
         {
             var file = new FileInfo(Path.Combine(directory.FullName, fileName));

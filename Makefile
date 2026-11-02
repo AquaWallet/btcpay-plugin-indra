@@ -1,5 +1,5 @@
 VERSION := 2.4.5
-RELEASE_PATH := ./release/BTCPayServer.Plugins.Boltz/$(VERSION)
+RELEASE_PATH := ./release/BTCPayServer.Plugins.Indra/$(VERSION)
 BOLTZ_REGTEST ?= $(CURDIR)/regtest
 BOLTZ_REGTEST_PATH := $(abspath $(BOLTZ_REGTEST))
 
@@ -14,7 +14,7 @@ gh-release:
 
 btcpay-appsettings:
 	echo "{ \
-	\"DEBUG_PLUGINS\": \"$(PWD)/BTCPayServer.Plugins.Boltz/bin/Debug/net10.0/BTCPayServer.Plugins.Boltz.dll\" \
+	\"DEBUG_PLUGINS\": \"$(PWD)/BTCPayServer.Plugins.Boltz/bin/Debug/net10.0/BTCPayServer.Plugins.Indra.dll\" \
 	}" > ./btcpayserver/BTCPayServer/appsettings.dev.json
 
 build:

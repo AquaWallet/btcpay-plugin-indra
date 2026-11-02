@@ -76,7 +76,7 @@ public class BoltzDaemon(
     private readonly List<string> _output = new();
     private readonly HttpClient _httpClient = new();
     private const int MaxLogLines = 150;
-    private string DataDir => Path.Combine(dataDirectories.Value.DataDir, "Plugins", "Boltz");
+    private string DataDir => Path.Combine(dataDirectories.Value.DataDir, "Plugins", "Indra");
     public string BinaryDataDir => ResolveBinaryDataDir(DataDir, configuration);
     private string DaemonBinary => Path.Combine(BinaryDataDir, "bin", $"linux_{Architecture}", "boltzd");
     private string DaemonCli => Path.Combine(BinaryDataDir, "bin", $"linux_{Architecture}", "boltzcli");
@@ -85,7 +85,7 @@ public class BoltzDaemon(
     private string ConfigFile => Path.Combine(DataDir, "boltz.toml");
 
     public readonly Uri DefaultUri = new("https://127.0.0.1:9002");
-    public const string DefaultApiUrl = "https://api.boltz.exchange";
+    public const string DefaultApiUrl = "https://indra.aquabtc.com";
     public string ApiUrl { get; private set; } = DefaultApiUrl;
     public string CertFile => Path.Combine(DataDir, "tls.cert");
     public bool Starting => _startTask is not null && !_startTask.IsCompleted;
@@ -226,8 +226,12 @@ public class BoltzDaemon(
         var liquidWalletSyncInterval = config.LiquidWalletSyncInterval is { } interval
             ? $"liquidWalletSyncInterval = {interval}"
             : string.Empty;
-        var boltzSection = config.ApiUrl is { } apiUrl
-            ? $"\n\n[Boltz]\nurl = \"{FormatApiUrl(apiUrl)}\""
+        // Indra only runs on mainnet, so other networks keep boltz-client's default
+        var apiUrl = config.ApiUrl is { } configured ? FormatApiUrl(configured)
+            : networkName == "mainnet" ? DefaultApiUrl
+            : null;
+        var boltzSection = apiUrl is not null
+            ? $"\n\n[Boltz]\nurl = \"{apiUrl}\""
             : string.Empty;
 
         return $"""
