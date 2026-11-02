@@ -234,26 +234,37 @@ public class BoltzLightningClient(
     {
         if (_clnInfo == null)
         {
-            var httpClient = new HttpClient();
-            string url = $"{daemon.ApiUrl}/v2/nodes";
-            HttpResponseMessage response = await httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-            string responseBody = await response.Content.ReadAsStringAsync();
+            // Boltz-compatible APIs don't all publish /v2/nodes; BTCPay handles an empty node list
+            try
+            {
+                var httpClient = new HttpClient();
+                string url = $"{daemon.ApiUrl}/v2/nodes";
+                HttpResponseMessage response = await httpClient.GetAsync(url, cancellation);
+                response.EnsureSuccessStatusCode();
+                string responseBody = await response.Content.ReadAsStringAsync(cancellation);
 
-            var nodeStats = JsonConvert.DeserializeObject<NodeStats>(responseBody);
-            _clnInfo = NodeInfo.Parse(nodeStats!.BTC.CLN.Uris.First());
+                var nodeStats = JsonConvert.DeserializeObject<NodeStats>(responseBody);
+                _clnInfo = NodeInfo.Parse(nodeStats!.BTC.CLN.Uris.First());
+            }
+            catch (Exception) when (!cancellation.IsCancellationRequested)
+            {
+            }
         }
 
         var client = await GetClient();
         var info = await client.GetInfo();
-        return new LightningNodeInformation
+        var nodeInfo = new LightningNodeInformation
         {
             Alias = "boltz-client",
             Version = info.Version,
             BlockHeight = (int)info.BlockHeights.Btc,
             Color = "#e6c826",
-            NodeInfoList = { _clnInfo }
         };
+        if (_clnInfo is not null)
+        {
+            nodeInfo.NodeInfoList.Add(_clnInfo);
+        }
+        return nodeInfo;
     }
 
     public async Task<LightningNodeBalance> GetBalance(CancellationToken cancellation = new CancellationToken())
