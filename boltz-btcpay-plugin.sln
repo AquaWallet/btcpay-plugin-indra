@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BTCPayServer.Plugins.Boltz", "BTCPayServer.Plugins.Boltz\BTCPayServer.Plugins.Boltz.csproj", "{5A47898E-1704-4EDF-AB93-2AE8160F4253}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BTCPayServer.Plugins.Indra", "BTCPayServer.Plugins.Boltz\BTCPayServer.Plugins.Indra.csproj", "{5A47898E-1704-4EDF-AB93-2AE8160F4253}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BTCPayServer.Plugins.Boltz.Tests", "BTCPayServer.Plugins.Boltz.Tests\BTCPayServer.Plugins.Boltz.Tests.csproj", "{B6653B6F-2A29-487B-B441-D6C4F7CEF2C2}"
 EndProject
