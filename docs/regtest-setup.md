@@ -1,5 +1,7 @@
 ---
-description: How to set up a local regtest environment for Indra BTCPay Plugin development using Boltz Regtest.
+description:
+  How to set up a local regtest environment for Indra BTCPay Plugin development
+  using Boltz Regtest.
 next: false
 ---
 
@@ -9,7 +11,8 @@ This page describes how to setup a regtest environment for plugin development.
 
 ## Regtest Setup Guide
 
-First, set up [Boltz Regtest](https://github.com/BoltzExchange/regtest). The plugin keeps its regtest profile in `.env.regtest` and uses a repo-local compose
+First, set up [Boltz Regtest](https://github.com/BoltzExchange/regtest). The
+plugin keeps its regtest profile in `.env.regtest` and uses a repo-local compose
 override so it can run without the EVM services or a BTCPay-specific profile.
 
 ```bash
@@ -42,5 +45,7 @@ make
 cp ./boltzd ./boltzcli ~/.btcpayserver/RegTest/Plugins/Indra/bin/linux_amd64/
 ```
 
-The Indra Greenfield Swagger spec is generated manually `BTCPayServer.Plugins.Indra/Resources/swagger.indra.json`. If you make changes to the Greenfield API
-endpoints, make sure to update this file as part of the same change.
+The Indra Greenfield Swagger spec is generated manually
+`BTCPayServer.Plugins.Indra/Resources/swagger.indra.json`. If you make changes
+to the Greenfield API endpoints, make sure to update this file as part of the
+same change.
