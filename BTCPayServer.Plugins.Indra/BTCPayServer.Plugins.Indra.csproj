@@ -18,7 +18,9 @@
 
     <ItemDefinitionGroup>
         <ProjectReference>
-            <Properties>StaticWebAssetsEnabled=false</Properties>
+            <!-- The test project builds BTCPay with static web assets on; building it a second
+                 time with them off would delete files that build needs -->
+            <Properties Condition="'$(IndraTestBuild)' != 'true'">StaticWebAssetsEnabled=false</Properties>
             <Private>false</Private>
             <ExcludeAssets>runtime;native;build;buildTransitive;contentFiles</ExcludeAssets>
         </ProjectReference>

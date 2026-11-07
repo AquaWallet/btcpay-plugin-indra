@@ -102,6 +102,18 @@ namespace BTCPayServer.Plugins.Indra.Tests
             Assert.Contains("[Boltz]\nurl = \"https://indra.aquabtc.com\"", config.ReplaceLineEndings("\n"));
         }
 
+        [Fact]
+        public void KeepsOffBoltzPluginPorts()
+        {
+            // boltz-client's TOML keys are its Go field names, so "RestDisabled" turns the
+            // REST proxy off; otherwise it binds 9003 and clashes with the Boltz plugin's daemon
+            var daemonUri = new Uri("https://127.0.0.1:9102");
+            var config = IndraDaemon.BuildConfig(new DaemonConfig(), "mainnet", daemonUri)
+                .ReplaceLineEndings("\n");
+
+            Assert.Contains("[RPC]\nhost = \"127.0.0.1\"\nport = 9102\nrestDisabled = true", config);
+        }
+
         private static FileInfo WriteLogFile(DirectoryInfo directory, string fileName, DateTimeOffset lastWriteTime)
         {
             var file = new FileInfo(Path.Combine(directory.FullName, fileName));

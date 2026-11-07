@@ -115,7 +115,7 @@ public class IndraDaemon(
         }
 
         var version = ClientVersion;
-        logger.LogInformation("Downloading indra client {Version} into {BinaryDataDir}", version, BinaryDataDir);
+        logger.LogInformation("Downloading boltz-client {Version} into {BinaryDataDir}", version, BinaryDataDir);
 
         string archiveName = $"boltz-client-linux-{Architecture}-v{version}.tar.gz";
         await using var s = await _httpClient.GetStreamAsync(ReleaseUrl(version) + archiveName);
@@ -246,7 +246,7 @@ public class IndraDaemon(
         [RPC]
         host = "{defaultUri.Host}"
         port = {defaultUri.Port}
-        rest.disable = true{indraSection}
+        restDisabled = true{indraSection}
         """;
     }
 
