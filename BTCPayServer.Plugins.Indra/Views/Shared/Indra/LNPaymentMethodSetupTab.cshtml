@@ -1,0 +1,41 @@
+@model BTCPayServer.Models.StoreViewModels.LightningNodeViewModel
+@{
+    var storeId = Model.StoreId;
+    if (Model.CryptoCode != "BTC")
+    {
+        return;
+    }
+}
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+       const customNodeAccordian = document.getElementById("CustomNodeSupport");
+       const template = document.getElementById("indra");
+       customNodeAccordian.appendChild(template.content.cloneNode(true));
+    });
+</script>
+
+<template id="indra">
+    <div class="accordion-item">
+        <h2 class="accordion-header" id="CustomIndraHeader">
+            <button type="button" class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#CustomIndraContent" aria-controls="CustomIndraContent" aria-expanded="false">
+                <span><strong>Indra</strong> via boltz-client</span>
+                <vc:icon symbol="caret-down"/>
+            </button>
+        </h2>
+        <div id="CustomIndraContent" class="accordion-collapse collapse" aria-labelledby="CustomIndraHeader" data-bs-parent="#CustomNodeSupport">
+            <div class="accordion-body">
+                <ul class="pb-2">
+                    <li>
+                        <code><b>type=</b>indra;<b>server=</b>https://127.0.0.1:9102;<b>macaroon</b>=hex-encoded-macaroon;<b>walletId=</b>wallet-id-for-lightning-payments</code>
+                    </li>
+                </ul>
+                <p class="my-2">Connects to an instance of  <a href="https://github.com/BoltzExchange/boltz-client" target="_blank" rel="noreferrer noopener">boltz-client</a>, using a liquid wallet to handle lightning payments using swaps.</p>
+            </div>
+        </div>
+    </div>
+</template>
+
+<div id="IndraSetup" class="pt-3 tab-pane fade" role="tabpanel" aria-labelledby="LightningNodeType-Indra">
+    You can use Indra to accept lightning payments without running a lightning node.
+</div>

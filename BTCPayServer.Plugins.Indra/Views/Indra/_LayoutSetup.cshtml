@@ -1,0 +1,57 @@
+@using AngleSharp.Common
+@using BTCPayServer.Plugins.Indra
+@{
+    Layout = "_LayoutWizard";
+    var storeId = Context.GetCurrentStoreId();
+}
+@inject IndraService IndraService
+
+@section PageHeadContent {
+    @await RenderSectionAsync("PageHeadContent", false)
+}
+
+@section PageFootContent {
+    @await RenderSectionAsync("PageFootContent", false)
+}
+
+@section Navbar {
+    @await RenderSectionAsync("Navbar", false)
+
+    @if (ViewData.TryGetValue("BackUrl", out var url))
+    {
+        <a href="@url">
+            <vc:icon symbol="back"/>
+        </a>
+    }
+    else
+    {
+        <a onclick="history.back()">
+            <vc:icon symbol="back"/>
+        </a>
+    }
+
+    @if (IndraService.GetSettings(storeId) is not null)
+    {
+        <a asp-controller="Indra" asp-action="Status" asp-route-storeId="@storeId" class="cancel">
+            <vc:icon symbol="cross"/>
+        </a>
+    }
+    else
+    {
+        <a asp-controller="UIStores" asp-action="Dashboard" asp-route-storeId="@storeId" class="cancel">
+            <vc:icon symbol="cross"/>
+        </a>
+    }
+}
+
+<header class="text-center">
+    <h1>@ViewData["Title"]</h1>
+    @if (ViewData.TryGetValue("Description", out var description))
+    {
+        <p class="text-secondary mt-3">@description</p>
+    }
+</header>
+
+@RenderBody()
+
+<vc:ui-extension-point location="onchain-wallet-setup-post-body" model="@Model"/>

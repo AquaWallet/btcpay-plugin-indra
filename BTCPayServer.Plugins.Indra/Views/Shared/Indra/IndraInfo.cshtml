@@ -1,0 +1,99 @@
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@using BTCPayServer.Security
+@using Grpc.Core
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@inject IndraService IndraService
+@model StoreDashboardViewModel
+
+<div style="grid-column-start: 1; grid-column-end: 13">
+
+    @if (IndraService.Daemon.HasError)
+    {
+        @if (User.IsInRole(Roles.ServerAdmin))
+        {
+            <a asp-controller="Indra" asp-action="Admin" asp-route-storeId="@Context.GetCurrentStoreId()"
+                class="alert alert-danger d-block">
+                Indra swap client not running
+            </a>
+        }
+        else
+        {
+            <div class="alert alert-danger">
+                <p>Indra swap client not running, tell a server admin.</p>
+            </div>
+        }
+    }
+    <partial name="Indra/_Notification" />
+</div>
+
+
+@try
+{
+    var storeId = Context.GetCurrentStoreId();
+    var client = IndraService.GetClient(storeId);
+    var settings = IndraService.GetSettings(storeId);
+    if (client is null || settings is null) return;
+
+    var (_, chain) = await client.GetAutoSwapConfig();
+    var chainConfigured = chain != null;
+
+    @if (chainConfigured)
+    {
+        <style>
+            @@media(min - width: 1400px) {
+                .widget.indra-lightning {
+                    grid-column-start: 1;
+                    grid-column-end: 7;
+                }
+
+                .widget.indra-chain {
+                    grid-column-start: 7;
+                    grid-column-end: 13;
+                }
+            }
+        </style>
+    }
+
+    var stats = await client.GetStats();
+    <div id="StoreIndraLightning-@Model.StoreId" class="widget indra-lightning">
+        <header>
+            <div class="d-flex align-items-center justify-content-start gap-2">
+                <span class="btcpay-status btcpay-status--enabled"></span>
+                <h6 class="text-truncate">Lightning Payments</h6>
+            </div>
+            <a asp-action="Index" asp-controller="Indra" asp-route-storeId="@storeId">
+                Manage
+            </a>
+        </header>
+        <partial name="Indra/_Stats" model="@IndraClient.ParseStats(stats)" />
+    </div>
+
+
+    @if (chainConfigured)
+    {
+        var status = await client.GetAutoSwapStatus();
+        var chainStatus = new AutoSwapStatus { SwapperType = SwapperType.Chain, Status = status.Chain, Compact = true };
+        <div id="StoreIndraChain-@Model.StoreId" class="widget indra-chain">
+            <partial name="Indra/_AutoSwapStatus" model="chainStatus" />
+        </div>
+    }
+}
+catch (Exception)
+{
+    <div style="grid-column-start: 1; grid-column-end: 13">
+        @if (User.IsInRole(Roles.ServerAdmin))
+        {
+            <a asp-controller="Indra" asp-action="Admin" asp-route-storeId="@Context.GetCurrentStoreId()"
+                class="alert alert-danger d-block">
+                Indra connection not working
+            </a>
+        }
+        else
+        {
+            <div class="alert alert-danger">
+                <p>Indra connection not working, tell a server admin.</p>
+            </div>
+        }
+    </div>
+}

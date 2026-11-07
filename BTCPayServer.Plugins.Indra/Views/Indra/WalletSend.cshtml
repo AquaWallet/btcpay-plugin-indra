@@ -1,0 +1,138 @@
+@using Boltzrpc
+@using BTCPayServer.Abstractions.TagHelpers
+@using BTCPayServer.Components.TruncateCenter
+@inject BTCPayServer.Security.ContentSecurityPolicies Csp
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@model BTCPayServer.Plugins.Indra.Models.WalletSendModel
+@inject IndraService IndraService
+@{
+    Csp.UnsafeEval();
+    Layout = "_LayoutSetup";
+    var currency = Model.Wallet.Currency;
+    var currencyName = IndraClient.CurrencyName(currency);
+    var pair = new Pair { From = currency, To = Currency.Btc };
+    ViewData["Title"] = $"Send From {currencyName} Wallet";
+    var balance = Model.Wallet.Balance.Confirmed;
+}
+
+@if (Model.SwapInfo != null)
+{
+    <partial name="_SwapInfoPartial" model="Model.SwapInfo"/>
+}
+else if (Model.TransactionId != null)
+{
+    var link = IndraService.GetTransactionLink(currency, Model.TransactionId);
+    <div class="payment-box mt-3">
+        <div class="alert alert-success">
+            Funds sent successfully
+        </div>
+        <div class="input-group mt-3">
+            <div class="form-floating">
+                <vc:truncate-center text="@Model.TransactionId" link="@link" padding="15" elastic="true" classes="form-control-plaintext" id="Transaction"/>
+                <label for="Transaction">Transaction</label>
+            </div>
+        </div>
+    </div>
+}
+else if (balance == 0)
+{
+    ViewData["Description"] = $"Pick Lightning or {IndraClient.CurrencyName(pair.To)} to swap out of your {currencyName} wallet";
+    <div class="alert alert-warning">
+        You have no confirmed balance in your wallet
+    </div>
+}
+else
+{
+    @section PageFootContent {
+        <partial name="_ValidationScriptsPartial"/>
+        <script src="/vendor/vuejs/vue.min.js" asp-append-version="true"></script>
+        <script src="~/Resources/js/walletSend.js" asp-append-version="true"></script>
+        <script>
+            initApp(@Json.Serialize(Model))
+        </script>
+    }
+
+    <form method="post" class="mt-3" id="WalletSend">
+        <div
+            id="SendTypeTablist"
+            class="nav btcpay-pills align-items-center justify-content-center mb-3"
+            role="tablist">
+            <input
+                type="radio"
+                asp-for="SendType"
+                id="SendType-Native"
+                v-model="sendType"
+                value="Native"/>
+            <label for="SendType-Native">L-BTC</label>
+
+            <input
+                type="radio"
+                asp-for="SendType"
+                id="SendType-Lightning"
+                v-model="sendType"
+                value="Lightning"/>
+            <label for="SendType-Lightning">Lightning</label>
+
+            <input
+                type="radio"
+                asp-for="SendType"
+                id="SendType-Chain"
+                v-model="sendType"
+                value="Chain"/>
+            <label for="SendType-Chain">BTC</label>
+        </div>
+
+        <div v-if="sendType === native">
+            <partial name="Indra/_Stats" model="@(new List<Stat> { new() { Name = "Wallet Balance", Unit = Unit.Sat, Value = balance } })"/>
+        </div>
+        <div v-if="sendType === ln">
+            <partial name="Indra/_Stats" model="IndraService.PairStats(Model.LnInfo!)"/>
+        </div>
+        <div v-if="sendType === chain">
+            <partial name="Indra/_Stats" model="IndraService.PairStats(Model.ChainInfo!)"/>
+        </div>
+
+        <div class="alert alert-warning" v-if="limits.maximal < limits.minimal">
+            <span>Minimal amount is greater than maximal amount</span>
+        </div>
+        <div v-else>
+            <div class="form-group">
+                <label asp-for="Destination" class="form-label">Destination</label>
+                <input
+                    required
+                    id="Destination" asp-for="Destination"
+                    :placeholder="sendType === ln ? 'Invoice, LNURL or offer' : 'Address'"
+                    class="form-control"/>
+                <span asp-validation-for="Destination" class="text-danger"></span>
+            </div>
+
+            <div class="form-group" id="AmountGroup">
+                <label asp-for="Amount" class="form-label">Amount (satoshi)</label>
+                <input id="Amount" v-model="amount" name="Amount" type="number"
+                       :placeholder="'How much to ' + (sendType === ln ? 'receive' : 'send')" class="form-control"
+                       :min="limits.minimal"
+                       :max="limits.maximal"
+                       :disabled="sendAll"/>
+                <span asp-validation-for="Amount" class="text-danger"></span>
+
+                <div class="form-group d-flex align-items-center mt-3" v-if="sendType === native">
+                    <input asp-for="SendAll" v-model="sendAll" type="checkbox" class="btcpay-toggle me-2"/>
+                    <label asp-for="SendAll" class="form-label mb-0 me-1">Send all</label>
+                </div>
+                <div class="form-text" v-else>
+                    Max (@Model.ReserveBalance sats reserve) is
+                    <button
+                        v-on:click.prevent="amount = limits.maximal"
+                        v-text="limits.maximal"
+                        class="btn btn-link p-0 align-baseline">
+                    </button> <span>sats</span>.
+                </div>
+            </div>
+            <button type="submit" class="btn btn-success">
+                Send
+            </button>
+        </div>
+    </form>
+}

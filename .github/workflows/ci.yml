@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -18,11 +18,11 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
           cache: true
           cache-dependency-path: |
-            ./BTCPayServer.Plugins.Boltz/packages.lock.json
-            ./BTCPayServer.Plugins.Boltz.Tests/BTCPayServer.Plugins.Boltz.Tests.csproj
+            ./BTCPayServer.Plugins.Indra/packages.lock.json
+            ./BTCPayServer.Plugins.Indra.Tests/BTCPayServer.Plugins.Indra.Tests.csproj
 
       - name: Use Node.js
         uses: actions/setup-node@v4
@@ -31,19 +31,19 @@ jobs:
           cache: "npm"
 
       - name: Restore dependencies
-        run: dotnet restore BTCPayServer.Plugins.Boltz --locked-mode
+        run: dotnet restore BTCPayServer.Plugins.Indra --locked-mode
 
       - name: Build plugin
-        run: dotnet build BTCPayServer.Plugins.Boltz --configuration Release --no-restore
+        run: dotnet build BTCPayServer.Plugins.Indra --configuration Release --no-restore
 
       - name: Build test project for Playwright
-        run: dotnet build BTCPayServer.Plugins.Boltz.Tests --configuration Debug -m:1
+        run: dotnet build BTCPayServer.Plugins.Indra.Tests --configuration Debug -m:1
 
       - name: Install Playwright Chromium
-        run: node ./BTCPayServer.Plugins.Boltz.Tests/bin/Debug/net10.0/.playwright/package/cli.js install chromium
+        run: node ./BTCPayServer.Plugins.Indra.Tests/bin/Debug/net10.0/.playwright/package/cli.js install chromium
 
       - name: Install Playwright Linux dependencies
-        run: sudo env PATH="$PATH" node ./BTCPayServer.Plugins.Boltz.Tests/bin/Debug/net10.0/.playwright/package/cli.js install-deps chromium
+        run: sudo env PATH="$PATH" node ./BTCPayServer.Plugins.Indra.Tests/bin/Debug/net10.0/.playwright/package/cli.js install-deps chromium
 
       - name: Install Node.js dependencies
         working-directory: ./docs
@@ -57,7 +57,7 @@ jobs:
         working-directory: ./docs
         run: npm run docs:build
 
-      - name: Setup Boltz regtest
+      - name: Setup Indra regtest
         env:
           COMPOSE_FILE: docker-compose.yml:../docker-compose.plugin-regtest.yml
           COMPOSE_PROFILES: ci
