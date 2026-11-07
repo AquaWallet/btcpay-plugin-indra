@@ -54,7 +54,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
             await AssertPaymentsReportContainsIndraData(tester, storeId, invoiceId, paymentMethodId);
         }
 
-        private static async Task<IndraSettlementData> AssertIndraSettlementData(
+        internal static async Task<IndraSettlementData> AssertIndraSettlementData(
             ServerTester tester,
             string storeId,
             string invoiceId,
@@ -129,7 +129,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
                 });
         }
 
-        private static async Task<InvoicePaymentMethodDataModel> WaitForLightningMethod(
+        internal static async Task<InvoicePaymentMethodDataModel> WaitForLightningMethod(
             BTCPayServerClient client,
             string invoiceId,
             string lightningPaymentMethodId)
@@ -228,7 +228,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
             throw new InvalidOperationException($"Report field {fieldName} was not found");
         }
 
-        private static async Task AssertInvoiceSettled(
+        internal static async Task AssertInvoiceSettled(
             BTCPayServerClient client,
             string storeId,
             string invoiceId,

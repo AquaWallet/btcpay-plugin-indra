@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Lightning;
@@ -197,6 +199,58 @@ namespace BTCPayServer.Plugins.Indra.Tests
                 "payinvoice",
                 "--force",
                 normalizedBolt11);
+        }
+
+        public static async Task<BoltzRegtestLndInvoice> CreateBoltzRegtestLndHoldInvoice(
+            this ServerTester serverTester, long amountSats)
+        {
+            ArgumentNullException.ThrowIfNull(serverTester);
+            var paymentHash = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var standardOutput = await RunBoltzRegtestLncliCommand(
+                "addholdinvoice",
+                paymentHash,
+                $"--amt={amountSats}",
+                $"--memo=indra-hold-{paymentHash[..8]}");
+
+            var invoice = JObject.Parse(standardOutput);
+            return new BoltzRegtestLndInvoice(invoice["payment_request"]!.Value<string>()!, paymentHash);
+        }
+
+        public static async Task CancelBoltzRegtestLndInvoice(this ServerTester serverTester, string paymentHash)
+        {
+            ArgumentNullException.ThrowIfNull(serverTester);
+            await RunBoltzRegtestLncliCommand("cancelinvoice", paymentHash);
+        }
+
+        public static async Task MineLiquidBlocks(this ServerTester serverTester, int count = 1)
+        {
+            ArgumentNullException.ThrowIfNull(serverTester);
+            await RunBoltzScriptsCommand(
+                "elements-cli",
+                "-rpcconnect=elementsd",
+                "-rpcwallet=regtest",
+                "-generate",
+                count.ToString(CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
+        /// Kills boltzd without a graceful stop, as a crash or an OOM kill would
+        /// </summary>
+        public static async Task CrashIndraDaemon(this ServerTester serverTester)
+        {
+            var daemon = await serverTester.GetIndraDaemon();
+            var field = typeof(IndraDaemon).GetField("_daemonProcess", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(field);
+            var process = Assert.IsType<Process>(field!.GetValue(daemon));
+            process.Kill();
+            await process.WaitForExitAsync();
+        }
+
+        public static async Task WaitForIndraDaemon(this ServerTester serverTester, int timeoutSeconds = 90)
+        {
+            var indraService = await serverTester.GetIndraService();
+            Assert.True(await WaitForAdminClient(indraService, timeoutSeconds),
+                "boltzd did not come back up");
         }
 
         public static async Task FundIndraStandaloneWallet(this ServerTester serverTester, string storeId,
