@@ -67,4 +67,5 @@ jobs:
           ./start.sh
 
       - name: Run tests
+        timeout-minutes: 60
         run: make test
