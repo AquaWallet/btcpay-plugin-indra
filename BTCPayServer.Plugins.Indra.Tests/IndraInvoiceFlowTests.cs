@@ -232,7 +232,8 @@ namespace BTCPayServer.Plugins.Indra.Tests
             BTCPayServerClient client,
             string storeId,
             string invoiceId,
-            string lightningPaymentMethodId)
+            string lightningPaymentMethodId,
+            int timeoutMilliseconds = 20_000)
         {
             await TestUtils.EventuallyAsync(async () =>
             {
@@ -245,7 +246,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
                 Assert.Contains(
                     paidLightningMethod.Payments,
                     payment => payment.Status == InvoicePaymentMethodDataModel.Payment.PaymentStatus.Settled);
-            });
+            }, timeoutMilliseconds);
         }
     }
 }

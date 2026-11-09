@@ -68,4 +68,16 @@ jobs:
 
       - name: Run tests
         timeout-minutes: 60
+        env:
+          PLAYWRIGHT_HEADLESS: "true"
         run: make test
+
+      - name: Upload daemon logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boltzd-logs
+          path: |
+            BTCPayServer.Plugins.Indra.Tests/bin/Debug/net10.0/**/boltz.log
+            ~/.btcpayserver/**/boltz.log
+          if-no-files-found: warn

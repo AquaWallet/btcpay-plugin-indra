@@ -45,10 +45,10 @@ namespace BTCPayServer.Plugins.Indra.Tests
             try
             {
                 var oldest = WriteLogFile(logDirectory, "boltz.log", DateTimeOffset.UtcNow.AddMinutes(-3));
-                var newest = WriteLogFile(logDirectory, "indra-2.log", DateTimeOffset.UtcNow.AddMinutes(-1));
-                var middle = WriteLogFile(logDirectory, "indra-1.log", DateTimeOffset.UtcNow.AddMinutes(-2));
+                var newest = WriteLogFile(logDirectory, "boltz-2.log", DateTimeOffset.UtcNow.AddMinutes(-1));
+                var middle = WriteLogFile(logDirectory, "boltz-1.log", DateTimeOffset.UtcNow.AddMinutes(-2));
 
-                var logFiles = IndraController.GetLogFilesPage(logDirectory.GetFiles("indra*.log"), 0);
+                var logFiles = IndraController.GetLogFilesPage(logDirectory.GetFiles("boltz*.log"), 0);
 
                 Assert.Equal(new[] { newest.Name, middle.Name, oldest.Name }, logFiles.Select(file => file.Name));
             }

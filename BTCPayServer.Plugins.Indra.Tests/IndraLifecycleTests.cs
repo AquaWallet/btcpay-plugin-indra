@@ -112,7 +112,8 @@ namespace BTCPayServer.Plugins.Indra.Tests
             // The plugin restarts boltzd on a non-zero exit, and boltzd recovers the pending swap
             await tester.WaitForIndraDaemon();
             await payment;
-            await IndraInvoiceFlowTests.AssertInvoiceSettled(client, account.StoreId, invoice.Id, LightningPaymentMethodId.ToString());
+            // BTCPay only reconnects its Lightning listener on a one-minute poll after the daemon drops
+            await IndraInvoiceFlowTests.AssertInvoiceSettled(client, account.StoreId, invoice.Id, LightningPaymentMethodId.ToString(), 120_000);
             await IndraInvoiceFlowTests.AssertIndraSettlementData(tester, account.StoreId, invoice.Id, LightningPaymentMethodId.ToString());
             await AssertWalletReceivedLbtc(tester, account.StoreId);
         }
@@ -157,7 +158,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
                 info = await client.GetSwapInfo(swap.Id);
                 Assert.Equal(SwapState.Refunded, info.Swap.State);
                 Assert.False(string.IsNullOrEmpty(info.Swap.RefundTransactionId));
-            }, TestUtils.TestTimeout);
+            }, 120_000);
 
             // The refund goes back to the store's own wallet
             await TestUtils.EventuallyAsync(async () =>
