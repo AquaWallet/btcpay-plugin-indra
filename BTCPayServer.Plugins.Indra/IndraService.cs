@@ -1,0 +1,703 @@
+#nullable enable
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Autoswaprpc;
+using Boltzrpc;
+using BTCPayServer.Client.Models;
+using BTCPayServer.Common;
+using BTCPayServer.Configuration;
+using BTCPayServer.Data;
+using BTCPayServer.Data.Payouts.LightningLike;
+using BTCPayServer.HostedServices;
+using BTCPayServer.Lightning;
+using BTCPayServer.Payments;
+using BTCPayServer.Payments.Lightning;
+using BTCPayServer.Payments.LNURLPay;
+using BTCPayServer.PayoutProcessors;
+using BTCPayServer.PayoutProcessors.Lightning;
+using BTCPayServer.Payouts;
+using BTCPayServer.Plugins.Indra.Models;
+using BTCPayServer.Services;
+using BTCPayServer.Services.Invoices;
+using BTCPayServer.Services.Stores;
+using BTCPayServer.Services.Wallets;
+using Grpc.Core;
+using LNURL;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using NBitcoin;
+using NBitcoin.Altcoins;
+using NBitcoin.Altcoins.Elements;
+using NBitcoin.DataEncoders;
+using NBitcoin.Payment;
+using Newtonsoft.Json.Linq;
+using MarkPayoutRequest = BTCPayServer.HostedServices.MarkPayoutRequest;
+using PullPaymentHostedService = BTCPayServer.HostedServices.PullPaymentHostedService;
+using StoreData = BTCPayServer.Data.StoreData;
+
+namespace BTCPayServer.Plugins.Indra;
+
+public class IndraService(
+    BTCPayWalletProvider btcPayWalletProvider,
+    StoreRepository storeRepository,
+    SettingsRepository settingsRepository,
+    EventAggregator eventAggregator,
+    ILogger<IndraService> logger,
+    BTCPayNetworkProvider btcPayNetworkProvider,
+    IOptions<ExternalServicesOptions> externalServiceOptions,
+    IndraDaemon daemon,
+    TransactionLinkProviders transactionLinkProviders,
+    PullPaymentHostedService pullPaymentHostedService,
+    BTCPayNetworkJsonSerializerSettings jsonSerializerSettings,
+    PluginHookService pluginHookService,
+    PaymentMethodHandlerDictionary paymentHandlers,
+    PayoutMethodHandlerDictionary payoutHandlers,
+    LightningAutomatedPayoutSenderFactory lightningAutomatedPayoutSenderFactory
+)
+    : EventHostedServiceBase(eventAggregator, logger)
+{
+    private static readonly string SettingsName = "Indra";
+
+    private ConcurrentDictionary<string, IndraSettings> _settings = new();
+    public IndraServerSettings ServerSettings { get; private set; }
+    private GetPairsResponse? _pairs;
+
+    public IndraDaemon Daemon => daemon;
+    public IndraClient? AdminClient => daemon.AdminClient;
+
+    public BTCPayNetwork BtcNetwork => btcPayNetworkProvider.GetNetwork<BTCPayNetwork>("BTC");
+    public BTCPayWallet BtcWallet => btcPayWalletProvider.GetWallet(BtcNetwork);
+
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        externalServiceOptions.Value.OtherExternalServices.Add(SettingsName, new Uri(IndraDaemon.DefaultApiUrl));
+        _settings = new ConcurrentDictionary<string, IndraSettings>(
+            (await storeRepository.GetSettingsAsync<IndraSettings>(SettingsName))
+            .Where(pair => pair.Value is not null)
+            .ToDictionary(pair => pair.Key, pair => pair.Value!));
+
+
+        daemon.SwapUpdate += async (_, response) =>
+        {
+            try
+            {
+                await OnSwap(response);
+            }
+            catch (Exception e)
+            {
+                logger.LogError(e, "Could not handle swap update");
+            }
+        };
+        await daemon.Init();
+
+        var serverSettings = await settingsRepository.GetSettingAsync<IndraServerSettings>(SettingsName) ??
+                             new IndraServerSettings();
+        await SetServerSettings(serverSettings);
+
+        if (daemon.Running)
+        {
+            foreach (var (storeId, settings) in _settings)
+            {
+                if (settings.GrpcUrl?.Scheme == "http")
+                {
+                    settings.GrpcUrl = new UriBuilder(settings.GrpcUrl) { Scheme = "https" }.Uri;
+                    settings.CertFilePath = daemon.CertFile;
+                    await Set(storeId, settings);
+                }
+
+                try
+                {
+                    await CheckStore(storeId);
+                }
+                catch (Exception e)
+                {
+                    logger.LogError(e, "Could not initialize store");
+                }
+            }
+        }
+
+        pluginHookService.ActionInvoked += async (_, args) =>
+        {
+            if (args.hook == "before-automated-payout-processing")
+            {
+                await BeforePayoutAction((BeforePayoutActionData)args.args);
+            }
+        };
+
+        pluginHookService.FilterInvoked += async (_, args) =>
+        {
+            if (args.hook == "modify-lnurlp-request")
+            {
+                if (args.args is StoreLNURLPayRequest data)
+                {
+                    await ModifyLnurlpAction(data);
+                }
+            }
+        };
+
+        await base.StartAsync(cancellationToken);
+    }
+
+    private async Task CheckStore(string storeId)
+    {
+        var settings = GetSettings(storeId)!;
+        try
+        {
+            await CheckSettings(settings);
+        }
+        catch (RpcException e) when (settings.GrpcUrl == daemon.DefaultUri)
+        {
+            logger.LogInformation(e, "Trying to generate new macaroon for store {storeId}", storeId);
+            await SetMacaroon(storeId, settings);
+            await Set(storeId, settings);
+        }
+    }
+
+    private async Task OnSwap(GetSwapInfoResponse info)
+    {
+        if (info is { ChainSwap: not null, ReverseSwap: not null })
+        {
+            var status = info.ReverseSwap?.Status ?? info.ChainSwap!.Status;
+            var isAuto = info.ReverseSwap?.IsAuto ?? info.ChainSwap!.IsAuto;
+            if (status != "swap.created" || !isAuto) return;
+        }
+
+        var tenantId = info.ReverseSwap?.TenantId ?? info.ChainSwap?.TenantId ?? info.Swap!.TenantId;
+        var found = _settings?.ToList()
+            .Find(pair => pair.Value.TenantId == tenantId);
+        if (found?.Value is null) return;
+
+        var store = await storeRepository.FindStore(found.Value.Key);
+        if (store is null)
+        {
+            logger.LogError("Could not find store {storeId}", found.Value.Key);
+            return;
+        }
+
+        if (info.Swap?.State == SwapState.Successful)
+        {
+            var payouts = await pullPaymentHostedService.GetPayouts(new PullPaymentHostedService.PayoutQuery
+            {
+                States = [PayoutState.InProgress],
+                Stores = [store.Id]
+            });
+            foreach (var payout in payouts)
+            {
+                if (BOLT11PaymentRequest.TryParse(info.Swap.Invoice, out var invoice, BtcNetwork.NBitcoinNetwork))
+                {
+                    var proof =
+                        payoutHandlers.TryGet(payout.GetPayoutMethodId())?.ParseProof(payout) as PayoutLightningBlob;
+                    if (proof?.PaymentHash != null && proof.PaymentHash == invoice?.PaymentHash?.ToString())
+                    {
+                        proof.Preimage = info.Swap.Preimage;
+                        payout.SetProofBlob(proof, null);
+                        await pullPaymentHostedService.MarkPaid(new MarkPayoutRequest
+                        {
+                            PayoutId = payout.Id,
+                            State = PayoutState.Completed,
+                            Proof = payout.GetProofBlobJson(),
+                        });
+                    }
+                }
+            }
+        }
+
+        var client = daemon.GetClient(found.Value.Value)!;
+        var (ln, chain) = await client.GetAutoSwapConfig();
+
+        var chainAddress = chain?.ToAddress;
+        if (!string.IsNullOrEmpty(chainAddress) && chainAddress == info.ChainSwap?.ToData.Address)
+        {
+            var address = await GenerateNewAddress(store);
+            await client.UpdateAutoSwapChainConfig(
+                new ChainConfig { ToAddress = address, },
+                ["to_address"]
+            );
+        }
+
+        var lnAddress = ln?.StaticAddress;
+        if (!string.IsNullOrEmpty(lnAddress) && lnAddress == info.ReverseSwap?.ClaimAddress)
+        {
+            var address = await GenerateNewAddress(store);
+            await client.UpdateAutoSwapLightningConfig(
+                new LightningConfig { StaticAddress = address, },
+                ["static_address"]
+            );
+        }
+    }
+
+    public async Task<string> GenerateNewAddress(StoreData store)
+    {
+        var derivation = store.GetDerivationSchemeSettings(paymentHandlers, "BTC");
+        if (derivation is null)
+        {
+            throw new InvalidOperationException("Store has no btc wallet configured");
+        }
+
+        var address = await BtcWallet.ReserveAddressAsync(store.Id, derivation.AccountDerivation, "Indra");
+        return address.Address.ToString();
+    }
+
+
+    private async Task CheckSettings(IndraSettings settings)
+    {
+        var client = daemon.GetClient(settings)!;
+        await client.GetInfo();
+    }
+
+    public async Task SetMacaroon(string storeId, IndraSettings settings)
+    {
+        var adminClient = AdminClient;
+        if (adminClient is null)
+        {
+            throw new InvalidOperationException("Indra admin client is not initialized");
+        }
+
+        var tenantName = "btcpay-" + storeId;
+        Tenant tenant;
+        try
+        {
+            tenant = await adminClient.GetTenant(tenantName);
+        }
+        catch (RpcException ex) when (ex.Status.StatusCode == StatusCode.NotFound)
+        {
+            tenant = await adminClient.CreateTenant(tenantName);
+        }
+
+        var response = await adminClient.BakeMacaroon(tenant.Id);
+        settings.TenantId = tenant.Id;
+        settings.Macaroon = response.Macaroon;
+    }
+
+    public async Task<IndraSettings> InitializeStore(string storeId)
+    {
+        var settings = new IndraSettings
+        {
+            GrpcUrl = daemon.DefaultUri,
+            CertFilePath = daemon.CertFile,
+        };
+        await SetMacaroon(storeId, settings);
+        return settings;
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await daemon.Stop();
+        await base.StopAsync(cancellationToken);
+    }
+
+    public IndraClient? GetClient(string? storeId)
+    {
+        return daemon.GetClient(GetSettings(storeId));
+    }
+
+
+    public async Task<IndraClient?> GetOrCreateClient(string storeId)
+    {
+        if (!daemon.Running)
+        {
+            return null;
+        }
+        var settings = GetSettings(storeId);
+        if (settings == null)
+        {
+            settings = await InitializeStore(storeId);
+            await Set(storeId, settings);
+        }
+        return daemon.GetClient(settings);
+    }
+
+    public bool IsWalletInUse(string storeId, ulong walletId)
+    {
+        var settings = GetSettings(storeId);
+        return settings?.StandaloneWallet?.Id == walletId;
+    }
+
+    public async Task<bool> IsSwapRefundable(string? storeId, string? swapId)
+    {
+        var client = GetClient(storeId);
+        if (client is null)
+        {
+            return false;
+        }
+        var info = await client!.GetInfo();
+        return info.RefundableSwaps.Contains(swapId);
+    }
+
+    public bool StoreConfigured(string? storeId)
+    {
+        return GetSettings(storeId) is not null;
+    }
+
+    public IndraSettings? GetSettings(string? storeId)
+    {
+        if (storeId is null)
+        {
+            return null;
+        }
+
+        _settings!.TryGetValue(storeId, out var settings);
+        return settings;
+    }
+
+    public bool IsStoreReadonly(string? storeId)
+    {
+        return GetSettings(storeId)?.StandaloneWallet?.Readonly ?? false;
+    }
+
+    public IndraLightningClient? GetLightningClient(IndraSettings? settings)
+    {
+        if (settings?.StandaloneWallet is not null)
+        {
+            return new IndraLightningClient(settings, settings.StandaloneWallet.Id,
+                BtcNetwork.NBitcoinNetwork, daemon);
+        }
+
+        return null;
+    }
+
+    public async Task<IndraSettlementData?> GetIndraSettlementData(
+        string? storeId,
+        PaymentEntity payment,
+        InvoiceEntity invoice,
+        CancellationToken cancellation = default)
+    {
+        if (payment.PaymentMethodId != PaymentTypes.LN.GetPaymentMethodId("BTC") &&
+            payment.PaymentMethodId != PaymentTypes.LNURL.GetPaymentMethodId("BTC"))
+        {
+            return null;
+        }
+
+        var lightningClient = GetLightningClient(GetSettings(storeId));
+        if (lightningClient is null)
+        {
+            return null;
+        }
+
+        var swapId = TryGetIndraSwapId(invoice, payment);
+        if (string.IsNullOrEmpty(swapId))
+        {
+            return null;
+        }
+
+        var settlementData = new IndraSettlementData { SwapId = swapId };
+
+        try
+        {
+            var reverseSwap = await lightningClient.GetReverseSwapInfo(swapId, cancellation);
+            if (reverseSwap is null)
+            {
+                return null;
+            }
+
+            settlementData.SettlementCurrency = reverseSwap.Pair.To.ToString().ToUpperInvariant();
+            settlementData.SettlementAddress = reverseSwap.ClaimAddress;
+            settlementData.SettlementTransactionId = reverseSwap.ClaimTransactionId;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not load Indra settlement data for payment {PaymentId} via swap id {SwapId}",
+                payment.Id, swapId);
+        }
+
+        return settlementData;
+    }
+
+    private string? TryGetIndraSwapId(InvoiceEntity invoice, PaymentEntity payment)
+    {
+        if (!paymentHandlers.TryGetValue(payment.PaymentMethodId, out var handler))
+        {
+            return null;
+        }
+
+        var prompt = invoice.GetPaymentPrompt(payment.PaymentMethodId);
+        if (prompt?.Details is null)
+        {
+            return null;
+        }
+
+        LigthningPaymentPromptDetails? promptDetails;
+        try
+        {
+            promptDetails = handler.ParsePaymentPromptDetails(prompt.Details) as LigthningPaymentPromptDetails;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not parse payment prompt details for payment {PaymentId}", payment.Id);
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(promptDetails?.InvoiceId))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(payment.Destination) &&
+            string.Equals(prompt.Destination, payment.Destination, StringComparison.Ordinal))
+        {
+            return promptDetails.InvoiceId;
+        }
+
+        return promptDetails.PaymentHash is not null &&
+               string.Equals(promptDetails.PaymentHash.ToString(), payment.Id, StringComparison.OrdinalIgnoreCase)
+            ? promptDetails.InvoiceId
+            : null;
+    }
+
+    public async Task SetServerSettings(IndraServerSettings settings)
+    {
+        await settingsRepository.UpdateSetting(settings, SettingsName);
+        await daemon.TryConfigure(new DaemonConfig
+        {
+            LogLevel = settings.LogLevel,
+            LiquidEsploraConcurrency = settings.LiquidEsploraConcurrency,
+            LiquidWalletSyncInterval = settings.LiquidWalletSyncInterval,
+            ApiUrl = string.IsNullOrWhiteSpace(settings.ApiUrl) ? null : new Uri(settings.ApiUrl),
+        });
+
+        ServerSettings = settings;
+    }
+
+    public async Task Set(string storeId, IndraSettings? settings)
+    {
+        var cryptoCode = "BTC";
+        var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId(cryptoCode);
+
+        var data = await storeRepository.FindStore(storeId);
+        if (settings is null)
+        {
+            _settings!.Remove(storeId, out var oldSettings);
+
+            var indraUrl = GetLightningClient(oldSettings)?.ToString();
+            var paymentMethod =
+                data?.GetPaymentMethodConfig<LightningPaymentMethodConfig>(paymentMethodId, paymentHandlers);
+            if (paymentMethod is not null && paymentMethod.GetExternalLightningUrl() == indraUrl)
+            {
+                data!.SetPaymentMethodConfig(paymentMethodId, null);
+                await storeRepository.UpdateStore(data!);
+            }
+        }
+        else
+        {
+            await CheckSettings(settings);
+            var lightningClient = GetLightningClient(settings);
+            if (lightningClient is not null)
+            {
+                var paymentMethod = new LightningPaymentMethodConfig();
+                paymentMethod.SetLightningUrl(lightningClient);
+
+                data!.SetPaymentMethodConfig(PaymentTypes.LN.GetPaymentMethodId("BTC"),
+                    JObject.FromObject(paymentMethod));
+            }
+
+            await storeRepository.UpdateStore(data!);
+            _settings[storeId] = settings;
+        }
+
+        await storeRepository.UpdateSetting(storeId, SettingsName, settings!);
+    }
+
+
+    public async Task<PairInfo?> GetPairInfo(Pair pair, SwapType swapType)
+    {
+        if (AdminClient is null) return null;
+        _pairs = await AdminClient.GetPairs();
+        var search = swapType switch
+        {
+            SwapType.Reverse => _pairs.Reverse,
+            SwapType.Submarine => _pairs.Submarine,
+            SwapType.Chain => _pairs.Chain,
+            _ => throw new ArgumentOutOfRangeException(nameof(swapType), swapType, null)
+        };
+        return search.ToList().Find(p => p.Pair.From == pair.From && p.Pair.To == pair.To);
+    }
+
+    public PaymentUrlBuilder GenerateBIP21(Currency currency, string cryptoInfoAddress, decimal? sats = null,
+        string? label = null)
+    {
+        var isLbtc = currency == Currency.Lbtc;
+        var prefix = isLbtc
+            ? BtcNetwork.NBitcoinNetwork.ChainName == ChainName.Mainnet ? "liquidnetwork" : "liquidtestnet"
+            : "bitcoin";
+        var builder = new PaymentUrlBuilder(prefix);
+        builder.Host = cryptoInfoAddress;
+        if (sats is not null && sats.Value != 0.0m)
+        {
+            var amount = LightMoney.FromUnit(sats.Value, LightMoneyUnit.Satoshi).ToUnit(LightMoneyUnit.BTC);
+            builder.QueryParams.Add("amount", amount.ToString(CultureInfo.InvariantCulture));
+        }
+
+        builder.QueryParams.Add("label", label ?? "Send to BTCPayserver");
+
+        if (!isLbtc)
+        {
+            builder.QueryParams.Add("assetid", ElementsParams<Liquid.LiquidRegtest>.PeggedAssetId.ToString());
+        }
+
+
+        return builder;
+    }
+
+    public string? GetTransactionLink(Currency currency, string txId)
+    {
+        return transactionLinkProviders.GetTransactionLink(
+            PaymentTypes.CHAIN.GetPaymentMethodId(currency.ToString().ToUpper()), txId);
+    }
+
+    public static List<Stat> PairStats(PairInfo pairInfo) =>
+    [
+        new() { Name = "Indra Service Fee", Value = pairInfo.Fees.Percentage, Unit = Unit.Percent },
+        new() { Name = "Network Fee", Value = pairInfo.Fees.MinerFees, Unit = Unit.Sat },
+        new() { Name = "Min Amount", Value = pairInfo.Limits.Minimal, Unit = Unit.Sat },
+        new() { Name = "Max Amount", Value = pairInfo.Limits.Maximal, Unit = Unit.Sat }
+    ];
+
+    private async Task ModifyLnurlpAction(StoreLNURLPayRequest data)
+    {
+        var settings = GetSettings(data.Store?.Id);
+        if (settings is not null)
+        {
+            var pairInfo = await GetPairInfo(new Pair { From = Currency.Btc, To = Currency.Lbtc }, SwapType.Reverse);
+            if (pairInfo != null)
+            {
+                data.MinSendable = Math.Max(data.MinSendable, LightMoney.Satoshis(pairInfo.Limits.Minimal));
+                data.MaxSendable = Math.Min(data.MaxSendable, LightMoney.Satoshis(pairInfo.Limits.Maximal));
+            }
+        }
+    }
+
+    private async Task BeforePayoutAction(BeforePayoutActionData data)
+    {
+        foreach (var payout in data.Payouts)
+        {
+            // cancel 0 amount invoice
+            var destination = payout.GetBlob(jsonSerializerSettings).Destination;
+            if (BOLT11PaymentRequest.TryParse(destination, out var bolt11, BtcNetwork.NBitcoinNetwork))
+            {
+                if (bolt11!.MinimumAmount == 0)
+                {
+                    await pullPaymentHostedService.MarkPaid(new MarkPayoutRequest
+                    {
+                        PayoutId = payout.Id,
+                        State = PayoutState.Cancelled,
+                    });
+                }
+            }
+        }
+    }
+
+    public string Hook => "before-automated-payout-processing";
+
+    public async Task<Data.PayoutData?> GetPayout(string storeId, string payoutId)
+    {
+        var payouts = await pullPaymentHostedService.GetPayouts(new PullPaymentHostedService.PayoutQuery
+        {
+            PayoutIds = [payoutId],
+            Stores = [storeId]
+        });
+        return payouts.FirstOrDefault(p => p.Id == payoutId);
+    }
+
+    public async Task<string?> GetPayoutSwap(string storeId, string payoutId)
+    {
+        var payout = await GetPayout(storeId, payoutId);
+        if (payout is null)
+        {
+            return null;
+        }
+
+        var client = GetClient(storeId);
+        if (client is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var destination = payout.GetBlob(jsonSerializerSettings).Destination;
+            var proof =
+                payoutHandlers.TryGet(payout.GetPayoutMethodId())?.ParseProof(payout) as PayoutLightningBlob;
+            var paymentHash = proof?.PaymentHash != null ? Encoders.Hex.DecodeData(proof.PaymentHash) : null;
+            if (paymentHash is not null)
+            {
+                var swapInfo = await client.GetSwapInfo(paymentHash);
+                return swapInfo.Swap!.Id;
+            }
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "Could not get swap for payout {PayoutId}", payout.Id);
+        }
+
+        return null;
+    }
+
+    public async Task<string?> GetOrCreatePayoutSwap(string storeId, string payoutId)
+    {
+        var swapId = await GetPayoutSwap(storeId, payoutId);
+        if (swapId is not null)
+        {
+            return swapId;
+        }
+
+        var payout = await GetPayout(storeId, payoutId);
+        if (payout is null)
+        {
+            return null;
+        }
+
+        var store = await storeRepository.FindStore(storeId);
+        var processor = lightningAutomatedPayoutSenderFactory.ConstructProcessor(new Data.PayoutProcessorData()
+        {
+            Store = store!,
+            StoreId = storeId,
+            PayoutMethodId = payout.GetPayoutMethodId().ToString(),
+            Processor = LightningAutomatedPayoutSenderFactory.ProcessorName,
+            Id = Guid.NewGuid().ToString()
+        });
+
+        var ln = GetLightningClient(GetSettings(storeId));
+        var result = await processor.HandlePayout(payout, ln!, CancellationToken.None);
+        if (result.Success is false)
+        {
+            logger.LogError("Could not create payout swap for {PayoutId}: {Message}", payoutId, result.Message);
+            throw new Exception(result.Message);
+        }
+        return await GetPayoutSwap(storeId, payoutId);
+    }
+
+    public async Task<List<PayoutModel>> GetPayouts(string storeId)
+    {
+        var result = new List<PayoutModel>();
+
+        var payouts = await pullPaymentHostedService.GetPayouts(new PullPaymentHostedService.PayoutQuery
+        {
+            States = [PayoutState.AwaitingPayment, PayoutState.InProgress],
+            Stores = [storeId]
+        });
+
+        foreach (var payout in payouts)
+        {
+            result.Add(new PayoutModel
+            {
+                PayoutId = payout.Id,
+                Destination = payout.GetBlob(jsonSerializerSettings).Destination,
+                Amount = payout.Amount ?? 0,
+                CreatedAt = payout.Date,
+            });
+        }
+        return result;
+    }
+}

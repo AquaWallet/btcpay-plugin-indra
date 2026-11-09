@@ -1,81 +1,60 @@
 ---
 description:
-  Install and configure the Boltz BTCPay Plugin to accept Lightning payments
-  non-custodially, with or without running your own Lightning node.
+  Install and configure the Indra BTCPay Plugin to accept Lightning payments
+  non-custodially without running a Lightning node.
 next:
-  text: "🚧 Limitations"
-  link: "/limitations"
+  text: "🔀 Moving from Boltz"
+  link: "/moving-from-boltz"
 ---
 
 # 👋 Introduction
 
-The Boltz BTCPay Plugin allows any merchant to accept Lightning payments in a
-non-custodial way without running a Lightning node or fully manage liquidity of
-an existing Lightning node.
+The Indra BTCPay Plugin lets any merchant accept Lightning payments without
+running a Lightning node. Each Lightning payment is swapped through Indra into
+L-BTC and paid to the merchant's own [Liquid](https://liquid.net/) wallet. The
+plugin never holds the merchant's keys.
 
 ## How do I install the plugin?
 
-**Merchants using a self-hosted server:** Navigate to the "Manage Plugins"
-section and install the "Boltz" plugin by
-[BoltzExchange](https://github.com/BoltzExchange).
+**Merchants using a self-hosted server:** In BTCPay Server, go to "Manage
+Plugins" and install "Indra" by AquaWallet. BTCPay Server 2.4.7 or later is
+required.
 
-**Merchants using a shared server:** Contact your server administrator to
-request the plugin installation.
+**Merchants using a shared server:** Ask your server administrator to install
+the plugin and enable it for tenants: as a server admin, open "Indra" in any
+store, go to the "Admin" tab and turn on "Allow Plugin for non-admin users".
 
-<figure><img src="./assets/manage-plugins.png" alt=""><figcaption><p>
-Boltz Plugin is one of the few options for merchants on a shared instance to accept Lightning payments without creating and linking custodial third party accounts.</p></figcaption></figure>
+## Setting it up with AQUA
 
-**Choose Operational Mode:** Once the plugin is installed, locate the new "Boltz
-Plugin" menu item to start the setup. The first step is to choose the
-operational mode. One can choose between letting the plugin manage liquidity of
-a connected Lightning node or accept Lightning payments without running a node.
-We choose the latter.
+The easiest setup is through
+[SamRock Protocol](https://github.com/rockstardev/SamRockProtocol). Install the
+SamRock plugin, open SamRock in your store, and scan the QR code with AQUA.
+SamRock creates a watch-only Liquid wallet in Indra from your AQUA wallet and
+turns on Lightning for the store. Payments then arrive in AQUA.
 
-<figure><img src="./assets/plugin_setup_01.png" alt=""><figcaption></figcaption></figure>
+## Setting it up manually
 
-**Review Fee Structure and Swaps:** Next, the plugin gives us a fee breakdown
-and explains how it uses Lightning -> [Liquid](https://liquid.net/) swaps to
-achieve the nodeless experience.
+Open "Indra" in the store menu and follow the setup:
 
-<figure><img src="./assets/plugin_setup_02.png" alt=""><figcaption></figcaption></figure>
+1. **Fees and swaps:** review the swap fees and how Lightning → Liquid swaps
+   work.
+2. **Wallet:** create a new Liquid wallet, or import an existing one. A
+   watch-only (read-only) wallet is enough to receive payments.
+3. **Chain swaps (optional):** set a maximum Liquid balance, above which the
+   plugin swaps L-BTC to mainchain Bitcoin automatically.
 
-**Wallet Setup:** Create a new wallet or import your existing Liquid wallet,
-which can be read-only for enhanced security as destination for swaps. If
-unsure, create a new wallet and follow the instructions.
-
-<figure><img src="./assets/plugin_setup_03.png" alt=""><figcaption></figcaption></figure>
-
-**Configure Chain Swaps:** Optionally, the setup allows to configure "Chain
-Swaps", meaning to swap Liquid Bitcoin to regular mainchain Bitcoin based on a
-max wallet balance you are comfortable holding in Liquid Bitcoin. You can skip
-this step, if you prefer to exchange Liquid for mainchain Bitcoin manually.
-Otherwise, set a budget and confirm.
-
-<figure><img src="./assets/plugin_setup_04.png" alt=""><figcaption></figcaption></figure>
-
-Done! "Lightning" shows active and running! 🎉
-
-<figure><img src="./assets/plugin_setup_05.png" alt=""><figcaption></figcaption></figure>
-
-It's a good idea to do a small test purchase to verify things are working. If
-you are running into issues, feel free to
-[reach out](https://support.boltz.exchange/hc/center).
-
-::: info
-
-BTCPay Server v2 is the only supported major version, BTCPay Server v1 support
-was discontinued
-
-:::
+When "Lightning" shows as active, make a small test purchase to check that
+payments arrive. If something goes wrong, open an issue on
+[GitHub](https://github.com/AquaWallet/btcpay-plugin-indra/issues).
 
 ## How does the plugin work under the hood?
 
-From an architectural perspective,
-[Boltz BTCPay Plugin](https://github.com/BoltzExchange/boltz-btcpay-plugin) is
-mainly a UI for [Boltz Client](https://docs.boltz.exchange/v/boltz-client), our
-long-running swap daemon. The plugin downloads latest release binaries of Boltz
-Client by default, checks the PGP signature and, if all checks out, starts the
-daemon.
+The plugin is a UI around
+[boltz-client](https://github.com/BoltzExchange/boltz-client), the swap daemon
+maintained by Boltz. On startup it downloads the pinned boltz-client release,
+checks it against the signed manifest bundled with the plugin, and runs it
+pointed at the Indra API (`https://indra.aquabtc.com`) on mainnet.
 
-The plugin also extends BTCPay's Greenfield API. You can access the merged
-server Swagger spec at `https://<your-btcpay-server>/swagger/v1/swagger.json`.
+The plugin also extends BTCPay's Greenfield API under
+`/api/v1/stores/{storeId}/indra/`. You can access the merged server Swagger spec
+at `https://<your-btcpay-server>/swagger/v1/swagger.json`.

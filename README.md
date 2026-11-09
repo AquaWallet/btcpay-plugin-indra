@@ -1,25 +1,33 @@
-# Boltz BTCPay Plugin
+# Indra BTCPay Plugin
 
-This plugin allows any merchant (even on a shared BTCPay instance) to accept Lightning payments.
+Accept Lightning payments in BTCPay Server without running a Lightning node.
+Incoming payments are swapped through [Indra](https://indra.aquabtc.com) and
+settle to your own Liquid wallet, non-custodially. It is the Lightning backend
+used by [SamRock Protocol](https://github.com/rockstardev/SamRockProtocol) when
+you connect a store to [AQUA](https://aqua.net).
 
-It features two modi:
-- Rebalance Mode: automatically manage liquidity of a connected Lightning node
-- Nodeless Mode: accept Lightning payments without running a node, using Liquid swaps
-
-For more details read our [launch blog post](https://blog.boltz.exchange/p/launching-the-boltz-btcpay-plugin).
+Indra is a fork of the
+[Boltz BTCPay Plugin](https://github.com/BoltzExchange/boltz-btcpay-plugin). It
+uses its own plugin identifier, routes, settings and data directory, so it can
+be installed next to the Boltz plugin without touching Boltz's state.
 
 ## Documentation
 
-The official documentation is available [here](https://docs.boltz.exchange/v/boltz-btcpay-plugin).
+See the [docs](https://aquawallet.github.io/btcpay-plugin-indra/).
 
-## BTCPay v1 Compatibility
+## Swap engine
 
-The current master branch is only compatbile with BTCPay v2, which is the distributed plugin version via the official BTCPay plugin system. If you want to run the Boltz BTCPay Plugin on BTCPay v1, you have to [download](https://github.com/BoltzExchange/boltz-btcpay-plugin/releases) and import the plugin via the Plugin UI.
+The plugin runs [boltz-client](https://github.com/BoltzExchange/boltz-client)
+(`boltzd`), maintained by Boltz, as its swap daemon and points it at the Indra
+API on mainnet. The plugin downloads the pinned boltz-client release from
+Boltz's GitHub releases and checks it against the embedded, signed
+`boltz-client-manifest.txt` before starting it.
 
-## Resources
+## Requirements
 
-* Get Help: [Support](https://support.boltz.exchange/hc/center)
-* Read our Docs: [Docs Home](https://docs.boltz.exchange/)
-* Read our Blog: [Substack](https://blog.boltz.exchange/)
-* Follow us: [X/Twitter](https://twitter.com/Boltzhq) | [Nostr](https://primal.net/p/nprofile1qqsqcdcltmv4qanpx3p7svcufdsg9rkk00x7l2sknra4e6whkv59l7clgcdzj)
-* Open a Lightning channel with us: [CLN](https://amboss.space/node/02d96eadea3d780104449aca5c93461ce67c1564e2e1d73225fa67dd3b997a6018) | [LND](https://amboss.space/node/026165850492521f4ac8abd9bd8088123446d126f648ca35e60f88177dc149ceb2)
+BTCPay Server 2.4.7 or later, on Linux (amd64 or arm64).
+
+## Support
+
+Open an issue on
+[GitHub](https://github.com/AquaWallet/btcpay-plugin-indra/issues).

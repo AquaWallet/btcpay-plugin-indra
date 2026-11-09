@@ -1,0 +1,87 @@
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@using BTCPayServer.Security
+@using Boltzrpc
+@using BTCPayServer.Plugins.Indra.Views
+@model BTCPayServer.Plugins.Indra.Models.IndraInfo
+@inject IndraService IndraService
+@{
+    ViewData.SetActivePage(IndraNavPages.Status, "Status");
+
+    var storeId = Context.GetCurrentStoreId();
+
+    var settings = IndraService.GetSettings(storeId);
+
+    var chainRecommendation = Model.Recommendations?.Chain.FirstOrDefault();
+}
+
+@if (Model.SwapInfo != null)
+{
+    var type = Model.SwapInfo.ChainSwap != null ? SwapType.Chain : Model.SwapInfo.ReverseSwap != null ? SwapType.Reverse : SwapType.Submarine;
+    ViewData["Title"] = $"{type} Swap";
+    <h3 class="text-center mx-auto">@ViewData["Title"]</h3>
+    <partial name="_SwapInfoPartial" model="Model.SwapInfo"/>
+}
+else
+{
+    <div class="d-flex flex-column gap-3">
+        @if (settings is not null && Model.Stats is not null && Model.StandaloneWallet is not null)
+        {
+            var stats = IndraClient.ParseStats(Model.Stats);
+            <div class="widget d-flex flex-column gap-4">
+                <div class="d-flex flex-column gap-2">
+                    <h4 class="my-0">Lightning Payments</h4>
+                    <div class="fw-semibold">
+                        Using wallet
+                        <partial name="Indra/_WalletLink" model="Model.StandaloneWallet.Name"/>
+                    </div>
+                    <partial name="Indra/_Stats" model="stats"/>
+                </div>
+                <div>
+                    <h5>Fee Info</h5>
+                    <partial name="Indra/_Fees" model="FeesModel.Standalone"/>
+                </div>
+            </div>
+        }
+
+        @if (Model.Status is not null)
+        {
+            @if (chainRecommendation is not null && Model.Chain is not null)
+            {
+                var chain = new AutoSwapStatus
+                {
+                    SwapperType = SwapperType.Chain, Status = Model.Status.Chain,
+                    Wallet = Model.Chain.FromWallet,
+                    ToWallet = Model.Chain.ToWallet,
+                };
+
+                var fees = new FeesModel { Pair = new Pair { From = Currency.Lbtc, To = Currency.Btc }, SwapType = SwapType.Chain };
+                var pendingChainSwaps = Model.PendingAutoSwaps?.Where(info => info.Type == SwapType.Chain).ToList();
+                var chainSwap = chainRecommendation.Swap;
+
+                <div class="widget d-flex gap-4 flex-column">
+                    <partial name="Indra/_AutoSwapStatus" model="chain"/>
+                    <partial name="Indra/_ChainRecommendations" model="chainRecommendation"/>
+                    @if (chainSwap != null)
+                    {
+                        <form method="post">
+                            <input type="hidden" name="chainRecommendation" value="@chainRecommendation"/>
+                            <button type="submit" class="btn btn-primary">Execute</button>
+                        </form>
+                    }
+                    @if (pendingChainSwaps?.Count > 0)
+                    {
+                        <div>
+                            <h5>Pending Swaps</h5>
+                            <partial name="Indra/_SwapsTable" model="pendingChainSwaps"/>
+                        </div>
+                    }
+                    <div>
+                        <h5>Swap Info</h5>
+                        <partial name="Indra/_Fees" model="fees"/>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+}

@@ -1,0 +1,43 @@
+@using BTCPayServer.Client
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@using BTCPayServer.Abstractions.Contracts
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Views
+@inject IScopeProvider ScopeProvider
+@inject IndraService IndraService
+@{
+    var storeId = ScopeProvider.GetCurrentStoreId();
+    var pages = new List<IndraNavPages> { IndraNavPages.Configuration, IndraNavPages.Swaps,
+IndraNavPages.Admin, IndraNavPages.Wallets };
+    if (IndraService.IsStoreReadonly(storeId))
+    {
+        pages.Add(IndraNavPages.Payouts);
+    }
+}
+
+@if (!string.IsNullOrEmpty(storeId))
+{
+    <ul class="navbar-nav">
+        <li class="nav-item">
+            <a permission="@Policies.CanViewStoreSettings" asp-controller="Indra" asp-action="Status"
+                asp-route-storeId="@storeId" class="nav-link @ViewData.ActivePageClass(IndraNavPages.Status)">
+                <vc:icon symbol="lightning" />
+                <span>Indra</span>
+            </a>
+        </li>
+        @if (IndraService.StoreConfigured(storeId) && (ViewData.IsPageActive([IndraNavPages.Status]) ||
+            ViewData.IsPageActive(pages)))
+        {
+            @foreach (var current in pages)
+            {
+                <li class="nav-item nav-item-sub">
+                    <a permission="@(current == IndraNavPages.Admin ? Policies.CanModifyServerSettings : Policies.CanViewStoreSettings)"
+                        asp-controller="Indra" asp-action="@current" asp-route-storeId="@storeId"
+                        class="nav-link @ViewData.ActivePageClass(current)">
+                        @current
+                    </a>
+                </li>
+            }
+        }
+    </ul>
+}

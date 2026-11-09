@@ -1,0 +1,58 @@
+@using Boltzrpc
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@model BTCPayServer.Plugins.Indra.Models.WalletSetup
+@{
+    Layout = "_LayoutSetup";
+    ViewData["Title"] = $"Import {IndraClient.CurrencyName(Model.Currency!.Value)} Wallet";
+    ViewData["Description"] = "The following methods assume that you already have an existing wallet created and backed up.";
+}
+
+<div class="list-group mt-4">
+    <a asp-controller="Indra" asp-action="ImportWallet" asp-all-route-data="@Model.GetRouteData("importMethod", WalletImportMethod.Mnemonic)" class="list-group-item list-group-item-action @(!Model.AllowCreateHot ? "disabled" : "")">
+        <div class="image">
+            <vc:icon symbol="wallet-seed"/>
+        </div>
+        <div class="content">
+            <h4>Enter wallet seed</h4>
+            <div class="d-flex flex-column gap-2">
+                <p class="mb-0 text-secondary">Provide the 12 or 24 word mnemonic. BTCPay Server controls funds of this wallet.</p>
+                @if (!Model.AllowCreateHot)
+                {
+                    <small class="d-block text-danger mt-2 mt-lg-0">Disabled by admin</small>
+                }
+            </div>
+        </div>
+        <vc:icon symbol="caret-right"/>
+    </a>
+</div>
+
+@if (Model.Currency == Currency.Btc)
+{
+    <div class="list-group mt-4">
+        <a asp-controller="Indra" asp-action="ImportWallet" asp-all-route-data="@Model.GetRouteData("importMethod", WalletImportMethod.Xpub)" class="list-group-item list-group-item-action">
+            <div class="image">
+                <vc:icon symbol="wallet-xpub"/>
+            </div>
+            <div class="content">
+                <h4>Enter extended public key</h4>
+                <p class="mb-0 text-secondary">Input the key string manually</p>
+            </div>
+            <vc:icon symbol="caret-right"/>
+        </a>
+    </div>
+}
+
+
+<div class="list-group mt-4">
+    <a asp-controller="Indra" asp-action="ImportWallet" asp-all-route-data="@Model.GetRouteData("importMethod", WalletImportMethod.Descriptor)" class="list-group-item list-group-item-action">
+        <div class="image">
+            <vc:icon symbol="wallet-file"/>
+        </div>
+        <div class="content">
+            <h4>Enter core descriptor</h4>
+            <p class="mb-0 text-secondary">Provide the core descriptor of your read-only wallet. BTCPay Server can't control funds.</p>
+        </div>
+        <vc:icon symbol="caret-right"/>
+    </a>
+</div>

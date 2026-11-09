@@ -1,0 +1,26 @@
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@using BTCPayServer.Security
+@using Boltzrpc
+@using BTCPayServer.Components
+@using BTCPayServer.Plugins.Indra.Views
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@model BTCPayServer.Plugins.Indra.Models.PayoutsModel
+@{
+    ViewData.SetActivePage(IndraNavPages.Payouts, "Payouts");
+    ViewData["Title"] = "Payouts";
+}
+
+@if (Model.Payouts.Count > 0)
+{
+    <p>
+        The following payouts have been approved and are awaiting payment.
+    </p>
+    <partial name="Indra/_PayoutsTable" model="Model.Payouts" />
+}
+else
+{
+    <p class="text-secondary mt-3">
+        There are no payouts awaiting payment.
+    </p>
+}

@@ -1,0 +1,20 @@
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Plugins.Indra.Models
+@inject IndraService IndraService
+@model FeesModel
+@{
+    try
+    {
+        var pairInfo = await IndraService.GetPairInfo(Model.Pair!, Model.SwapType!.Value);
+        var stats = IndraService.PairStats(pairInfo);
+
+        <partial name="Indra/_Stats" model="stats" />
+    }
+    catch (Exception)
+    {
+        <div class="alert alert-danger">
+            Fee info not available, check logs for more details.
+        </div>
+        return;
+    }
+}

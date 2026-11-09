@@ -1,0 +1,30 @@
+@using BTCPayServer.Plugins.Indra
+@using BTCPayServer.Security
+@using BTCPayServer.Plugins.Indra.Views
+@inject IndraDaemon Daemon
+@inject IndraService IndraService
+
+@if (Daemon.Starting)
+{
+    <div class="alert alert-info">
+        <span>Indra is starting...</span>
+    </div>
+}
+
+@{
+    var storeId = Context.GetCurrentStoreId();
+    if (IndraService.IsStoreReadonly(storeId) && !ViewData.IsPageActive([IndraNavPages.Payouts, IndraNavPages.Swaps]))
+    {
+        var payouts = await IndraService.GetPayouts(storeId);
+        if (payouts.Count > 0)
+        {
+            <div class="alert alert-info">
+                <span>
+                    There are payouts awaiting payment.
+                    <a href="@Url.Action("Payouts", "Indra", new { storeId = Context.GetCurrentStoreId() })"
+                        class="alert-link">View payouts</a>
+                </span>
+            </div>
+        }
+    }
+}

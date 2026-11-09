@@ -1,39 +1,35 @@
 import llmstxt from "vitepress-plugin-llms";
 import { defineConfig } from "vitepress";
 
-const docsRoot = "https://docs.boltz.exchange";
+const repo = "https://github.com/AquaWallet/btcpay-plugin-indra";
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  title: "Boltz BTCPay Plugin",
-  description: "Boltz BTCPay Plugin Docs",
-  head: [["link", { rel: "icon", href: "/assets/logo.svg" }]],
+  title: "Indra BTCPay Plugin",
+  description: "Indra BTCPay Plugin Docs",
+  // Served from GitHub Pages under the repository name
+  base: "/btcpay-plugin-indra/",
+  head: [["link", { rel: "icon", href: "/btcpay-plugin-indra/assets/logo.png" }]],
   themeConfig: {
-    logo: "/assets/logo.svg",
+    logo: "/assets/logo.png",
     search: {
       provider: "local",
       options: {
         detailedView: true,
       },
     },
-    nav: [{ text: "🏠 Docs Home", link: docsRoot, target: "_self" }],
     sidebar: [
       {
         items: [
           { text: "👋 Introduction", link: "/index" },
+          { text: "🔀 Moving from Boltz", link: "/moving-from-boltz" },
           { text: "🚧 Limitations", link: "/limitations" },
           { text: "🏗️ Building the Plugin", link: "/building-the-plugin" },
           { text: "🧪 Regtest Setup", link: "/regtest-setup" },
-          { text: "🏠 Docs Home", link: docsRoot, target: "_self" },
         ],
       },
     ],
-    socialLinks: [
-      {
-        icon: "github",
-        link: "https://github.com/BoltzExchange/boltz-btcpay-plugin",
-      },
-    ],
+    socialLinks: [{ icon: "github", link: repo }],
   },
   // Ignore dead links to localhost
   ignoreDeadLinks: [/https?:\/\/localhost/],

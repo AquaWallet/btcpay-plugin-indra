@@ -1,6 +1,6 @@
 ---
 description:
-  How to manually build and package the Boltz BTCPay Plugin from source for
+  How to manually build and package the Indra BTCPay Plugin from source for
   development or manual upload to a BTCPay Server instance.
 ---
 

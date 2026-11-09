@@ -1,0 +1,1334 @@
+#nullable enable
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Boltzrpc;
+using BTCPayServer.Abstractions.Constants;
+using BTCPayServer.Data;
+using System.Threading;
+using BTCPayServer.Client;
+using Autoswaprpc;
+using BTCPayServer.Models.StoreViewModels;
+using BTCPayServer.Payments;
+using BTCPayServer.Plugins.Indra.Models;
+using BTCPayServer.Services;
+using BTCPayServer.Services.Invoices;
+using Google.Protobuf;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using NBitcoin;
+using Newtonsoft.Json;
+using AuthenticationSchemes = BTCPayServer.Abstractions.Constants.AuthenticationSchemes;
+using ChainConfig = Autoswaprpc.ChainConfig;
+using RpcException = Grpc.Core.RpcException;
+using BTCPayServer.Abstractions.Models;
+using AngleSharp.Text;
+
+namespace BTCPayServer.Plugins.Indra;
+
+[Route("plugins/{storeId}/Indra")]
+[Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewStoreSettings)]
+public class IndraController(
+    IndraService indraService,
+    IndraDaemon indraDaemon,
+    PoliciesSettings policiesSettings,
+    PaymentMethodHandlerDictionary handlers,
+    ILogger<IndraController> logger
+)
+    : Controller
+{
+    public IndraClient? Indra => indraDaemon.GetClient(Settings);
+    public IndraSettings? Settings => SetupSettings ?? SavedSettings;
+    private bool Configured => indraService.StoreConfigured(CurrentStoreId);
+    private IndraSettings? SavedSettings => indraService.GetSettings(CurrentStoreId);
+    private bool IsAdmin => User.IsInRole(Roles.ServerAdmin);
+    private bool AllowCreateHot => IsAdmin || policiesSettings.AllowHotWalletForAll;
+
+    private const string BtcPayName = "BTCPay";
+    private const string BackUrl = "BackUrl";
+    private const int LogFilesPageSize = 5;
+
+    private StoreData CurrentStore => HttpContext.GetStoreData();
+    private string CurrentStoreId => CurrentStore.Id;
+
+    private IndraSettings? SetupSettings
+    {
+        get
+        {
+            var setupSettings = (string?)TempData.Peek("setupSettings");
+            return String.IsNullOrEmpty(setupSettings)
+                ? null
+                : JsonConvert.DeserializeObject<IndraSettings>(setupSettings);
+        }
+        set => TempData["setupSettings"] = JsonConvert.SerializeObject(value);
+    }
+
+    private ChainConfig? ChainSetup
+    {
+        get
+        {
+            var chainConfig = (string?)TempData.Peek("chainSetup");
+            return String.IsNullOrEmpty(chainConfig)
+                ? null
+                : Google.Protobuf.JsonParser.Default.Parse<ChainConfig>(chainConfig);
+        }
+        set => TempData["chainSetup"] = value is null ? null : JsonFormatter.Default.Format(value);
+    }
+
+    [HttpGet("")]
+    public IActionResult Index(string storeId)
+    {
+        return RedirectToAction(nameof(Status), new { storeId });
+    }
+
+    private void ClearSetup()
+    {
+        SetupSettings = null;
+        ChainSetup = null;
+    }
+
+    // GET
+    [HttpGet("status")]
+    public async Task<IActionResult> Status(string storeId)
+    {
+        ClearSetup();
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+
+        var data = new IndraInfo();
+        try
+        {
+            data.Info = await Indra.GetInfo();
+            data.Stats = await Indra.GetStats();
+            if (Settings?.StandaloneWallet is not null)
+            {
+                data.StandaloneWallet = await Indra.GetWallet(Settings?.StandaloneWallet?.Name!);
+            }
+
+            (data.Ln, data.Chain) = await Indra.GetAutoSwapConfig();
+            if (data.Ln is not null || data.Chain is not null)
+            {
+                var response = await Indra.ListSwaps(new ListSwapsRequest
+                { Include = IncludeSwaps.Auto, Unify = true, State = SwapState.Pending });
+                data.PendingAutoSwaps = response.AllSwaps.ToList();
+                data.Status = await Indra.GetAutoSwapStatus();
+                data.Recommendations = await Indra.GetAutoSwapRecommendations();
+            }
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return View(data);
+    }
+
+
+    [HttpPost("status")]
+    public async Task<IActionResult> Status(string storeId, string? chainRecommendation)
+    {
+
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            var request = new ExecuteRecommendationsRequest { Force = true };
+            if (!string.IsNullOrEmpty(chainRecommendation))
+                request.Chain.Add(Google.Protobuf.JsonParser.Default.Parse<ChainRecommendation>(chainRecommendation));
+            await Indra.ExecuteAutoSwapRecommendations(request);
+            TempData[WellKnownTempData.SuccessMessage] = "Recommendations executed";
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return RedirectToAction(nameof(Status), new { storeId });
+    }
+
+    [HttpGet("wallets/{walletName?}")]
+    public async Task<IActionResult> Wallets(string? walletName, WalletViewModel vm)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            if (string.IsNullOrEmpty(walletName))
+            {
+                var wallets = await Indra.GetWallets(true);
+                return View(new WalletsModel { Wallets = wallets.Wallets_.ToList() });
+            }
+            vm.Wallet = await Indra.GetWallet(walletName);
+            const int MaxCount = 30;
+            var allTransactions = new List<WalletTransaction>();
+            int remaining = vm.Count;
+            ulong offset = (ulong)vm.Skip;
+
+            while (remaining > 0)
+            {
+                int fetchCount = Math.Min(remaining, MaxCount);
+                var response = await Indra.ListWalletTransactions(new ListWalletTransactionsRequest
+                {
+                    Id = vm.Wallet.Id,
+                    Limit = (ulong)fetchCount,
+                    Offset = offset,
+                });
+
+                var transactions = response.Transactions.ToList();
+                if (transactions.Count == 0)
+                {
+                    break;
+                }
+
+                allTransactions.AddRange(transactions);
+
+                if (transactions.Count < fetchCount)
+                {
+                    // No more transactions to fetch
+                    break;
+                }
+
+                remaining -= transactions.Count;
+                offset += (ulong)transactions.Count;
+            }
+
+            vm.Transactions = allTransactions;
+            return View("Wallet", vm);
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+            return RedirectToAction(nameof(Status), new { storeId = CurrentStoreId });
+        }
+    }
+
+    [HttpGet("wallets/{walletId}/remove")]
+    public IActionResult WalletRemove()
+    {
+        return View(
+            "Confirm",
+            new ConfirmModel(
+                "Delete Wallet",
+                "This action will remove the wallet. You will not be able to recover any funds if you don't have a backup.",
+                "Delete"
+            )
+        );
+    }
+
+    [HttpPost("wallets/{walletId}/remove")]
+    public async Task<IActionResult> WalletRemovePost(ulong walletId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            if (indraService.IsWalletInUse(CurrentStoreId!, walletId))
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "You cannot delete the wallet used for lightning payments";
+                return RedirectToAction(nameof(Wallets), new { storeId = CurrentStoreId, walletName = Settings?.StandaloneWallet?.Name });
+            }
+            await Indra.RemoveWallet(walletId);
+            TempData[WellKnownTempData.SuccessMessage] = "Wallet deleted";
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return RedirectToAction(nameof(Status), new { storeId = CurrentStoreId });
+    }
+
+    [HttpGet("swaps/{swapId?}")]
+    public async Task<IActionResult> Swaps(SwapsModel vm, string? swapId)
+    {
+        ClearSetup();
+        if (!Configured || Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            if (!string.IsNullOrEmpty(swapId))
+            {
+                vm.SwapInfo = await Indra.GetSwapInfo(swapId);
+            }
+            else
+            {
+                vm.Swaps = await Indra.ListSwaps(new ListSwapsRequest
+                {
+                    Limit = (ulong)vm.Count,
+                    Offset = (ulong)vm.Skip,
+                    Unify = true,
+                });
+            }
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return View(vm);
+    }
+
+    [HttpGet("payouts/{payoutId?}")]
+    public async Task<IActionResult> Payouts(PayoutsModel vm, string? payoutId)
+    {
+        ClearSetup();
+        if (!Configured || indraService is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            if (!string.IsNullOrEmpty(payoutId))
+            {
+                var swapId = await indraService.GetOrCreatePayoutSwap(CurrentStoreId!, payoutId);
+                return RedirectToAction(nameof(Swaps), new { swapId, storeId = CurrentStoreId });
+            }
+            vm.Payouts = await indraService.GetPayouts(CurrentStoreId!);
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return View(vm);
+    }
+
+
+    [HttpGet("configuration")]
+    public async Task<IActionResult> Configuration(string storeId)
+    {
+        ClearSetup();
+        if (!Configured || Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        var data = new IndraConfig { Settings = Settings, };
+
+        try
+        {
+            data.ExistingWallets = await GetExistingWallets();
+
+            (data.Ln, data.Chain) = await Indra!.GetAutoSwapConfig();
+            if (data.Ln is not null)
+            {
+                data.Ln.BudgetInterval = SecondsToDays(data.Ln.BudgetInterval);
+            }
+
+            if (data.Chain is not null)
+            {
+                data.Chain.BudgetInterval = SecondsToDays(data.Chain.BudgetInterval);
+            }
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e, "Error connecting to Indra");
+        }
+
+        return View(data);
+    }
+
+    [HttpGet("wallet/{walletId}/send")]
+    public async Task<IActionResult> WalletSend(ulong walletId, string? swapId, string? transactionId)
+    {
+        var vm = new WalletSendModel();
+
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            vm.Wallet = await Indra.GetWallet(walletId);
+            vm.TransactionId = transactionId;
+            if (swapId is not null)
+            {
+                vm.SwapInfo = await Indra.GetSwapInfo(swapId);
+            }
+            else if (vm.Wallet.Balance.Confirmed > 0)
+            {
+                vm.WalletSendFee = await Indra.GetWalletSendFee(new WalletSendRequest
+                {
+                    Id = walletId,
+                    SendAll = true,
+                    IsSwapAddress = true,
+                });
+
+                var chainConfig = await Indra.GetChainConfig();
+                if (chainConfig != null)
+                {
+                    vm.ReserveBalance = chainConfig.ReserveBalance;
+                }
+
+                var pair = new Pair { From = vm.Wallet.Currency, To = Currency.Btc };
+                var maxSend = (ulong)Math.Max((long)(vm.WalletSendFee.Amount - vm.ReserveBalance), 0);
+                vm.LnInfo = await indraService.GetPairInfo(pair, SwapType.Submarine);
+                vm.ChainInfo = await indraService.GetPairInfo(pair, SwapType.Chain);
+                var fees = vm.LnInfo.Fees;
+                // the service fee is applied to the LN amount
+                var maxLn = (ulong)Math.Floor((maxSend - fees.MinerFees) / (1 + fees.Percentage / 100));
+                vm.LnInfo.Limits.Maximal = Math.Min(vm.LnInfo.Limits.Maximal, maxLn);
+                vm.ChainInfo.Limits.Maximal = Math.Min(vm.ChainInfo.Limits.Maximal, maxSend);
+            }
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+            return RedirectToAction(nameof(Status), new { storeId = CurrentStoreId });
+        }
+
+        return View(vm);
+    }
+
+    [HttpGet("wallet/{walletId}/credentials")]
+    public async Task<IActionResult> WalletCredentials(ulong walletId, string storeId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            var creds = await Indra.GetWalletCredentials(walletId);
+            if (string.IsNullOrEmpty(creds.Mnemonic))
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "Wallet credentials not available";
+                return RedirectToAction(nameof(Status), new { storeId, walletId });
+            }
+
+            return this.RedirectToRecoverySeedBackup(new RecoverySeedBackupViewModel
+            {
+                Mnemonic = creds.Mnemonic,
+                ReturnUrl = Url.Action(nameof(Status), new { storeId }),
+                IsStored = true,
+                RequireConfirm = false,
+            });
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+            return RedirectToAction(nameof(Status), new { storeId = CurrentStoreId });
+        }
+    }
+
+    [HttpPost("wallet/{walletId}/send")]
+    public async Task<IActionResult> WalletSend(WalletSendModel vm, ulong walletId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            var storeId = CurrentStoreId;
+            switch (vm.SendType)
+            {
+                case SendType.Native:
+                    var sendRequest = new WalletSendRequest
+                    {
+                        Address = vm.Destination,
+                        Amount = vm.Amount,
+                        Id = walletId,
+                        SendAll = vm.SendAll,
+                    };
+
+                    if (vm.FeeRate.HasValue)
+                    {
+                        sendRequest.SatPerVbyte = vm.FeeRate.Value;
+                    }
+
+                    var sendResponse = await Indra.WalletSend(sendRequest);
+                    return RedirectToAction(nameof(WalletSend),
+                        new { storeId, walletId, transactionId = sendResponse.TxId });
+                case SendType.Lightning:
+                    var request = new CreateSwapRequest
+                    {
+                        Amount = vm.Amount,
+                        Invoice = vm.Destination,
+                        Pair = new Pair { From = Currency.Lbtc, To = Currency.Btc },
+                        SendFromInternal = true,
+                        WalletId = walletId,
+                        ZeroConf = true,
+                    };
+                    if (vm.FeeRate.HasValue)
+                    {
+                        request.SatPerVbyte = vm.FeeRate.Value;
+                    }
+
+                    var swap = await Indra.CreateSwap(request);
+                    return RedirectToAction(nameof(WalletSend), new { storeId, walletId, swapId = swap.Id });
+                case SendType.Chain:
+                    var chainRequest = new CreateChainSwapRequest
+                    {
+                        Amount = vm.Amount,
+                        ToAddress = vm.Destination,
+                        Pair = new Pair { From = Currency.Lbtc, To = Currency.Btc },
+                        FromWalletId = walletId,
+                        LockupZeroConf = true,
+                        AcceptZeroConf = true,
+                    };
+                    if (vm.FeeRate.HasValue)
+                    {
+                        chainRequest.SatPerVbyte = vm.FeeRate.Value;
+                    }
+
+                    var chainSwap = await Indra.CreateChainSwap(chainRequest);
+                    return RedirectToAction(nameof(WalletSend), new { storeId, walletId, swapId = chainSwap.Id });
+            }
+
+            vm.Wallet = await Indra.GetWallet(walletId);
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return RedirectToAction(nameof(WalletSend), new { storeId = CurrentStoreId, walletId });
+    }
+
+    [HttpGet("wallet/{walletId}/receive")]
+    public async Task<IActionResult> WalletReceive(WalletReceiveModel vm, ulong walletId, string? swapId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            vm.Wallet = await Indra.GetWallet(walletId);
+            if (swapId is not null)
+            {
+                vm.SwapInfo = await Indra.GetSwapInfo(swapId);
+            }
+            vm.ChainPair = new Pair
+            {
+                From = vm.Wallet.Currency == Currency.Btc ? Currency.Lbtc : Currency.Btc,
+                To = vm.Wallet.Currency
+            };
+            vm.ChainInfo = await indraService.GetPairInfo(vm.ChainPair, SwapType.Chain);
+            var lnPair = new Pair { From = Currency.Btc, To = vm.Wallet.Currency };
+            vm.LnInfo = await indraService.GetPairInfo(lnPair, SwapType.Reverse);
+
+            return View(vm);
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+            return RedirectToAction(nameof(Status), new { storeId = CurrentStoreId });
+        }
+    }
+
+    [HttpPost("wallet/{walletId}/receive")]
+    public async Task<IActionResult> WalletReceive(WalletReceiveModel vm, ulong walletId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+
+        try
+        {
+            vm.Wallet = await Indra.GetWallet(walletId);
+            var storeId = CurrentStoreId;
+
+            switch (vm.SendType)
+            {
+                case SendType.Native:
+                    var receiveResponse = await Indra.WalletReceive(walletId);
+                    return RedirectToAction(nameof(WalletReceive),
+                        new { storeId, walletId, address = receiveResponse.Address });
+                case SendType.Lightning:
+                    var request = new CreateReverseSwapRequest
+                    {
+                        Amount = vm.AmountLn!.Value,
+                        Pair = new Pair { From = Currency.Btc, To = vm.Wallet.Currency },
+                        WalletId = walletId,
+                        AcceptZeroConf = true,
+                    };
+                    var reverseSwap = await Indra.CreateReverseSwap(request);
+                    return RedirectToAction(nameof(WalletReceive), new { storeId, walletId, swapId = reverseSwap.Id });
+                case SendType.Chain:
+                    var chainRequest = new CreateChainSwapRequest
+                    {
+                        Amount = vm.AmountChain!.Value,
+                        Pair = new Pair
+                        {
+                            From = vm.Wallet.Currency == Currency.Lbtc ? Currency.Btc : Currency.Lbtc,
+                            To = vm.Wallet.Currency
+                        },
+                        ToWalletId = walletId,
+                        ExternalPay = true,
+                        AcceptZeroConf = true,
+                    };
+                    var chainSwap = await Indra.CreateChainSwap(chainRequest);
+                    return RedirectToAction(nameof(WalletReceive), new { storeId, walletId, swapId = chainSwap.Id });
+            }
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return RedirectToAction(nameof(WalletReceive), new { storeId = CurrentStoreId, walletId });
+    }
+
+
+    [HttpGet("swaps/{id}/partial")]
+    public async Task<IActionResult> SwapInfoPartial(string id)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                var info = await Indra.GetSwapInfo(id);
+                return PartialView("_SwapInfoPartial", info);
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpGet("swap/{id}/sse")]
+    public async Task SwapInfoStream(string id, string storeId)
+    {
+        if (Indra is null)
+        {
+            Response.Redirect(Url.Action(nameof(SetupMode), new { storeId })!);
+            return;
+        }
+
+        Response.Headers.Append("Content-Type", "text/event-stream");
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("Connection", "keep-alive");
+        var ct = HttpContext.RequestAborted;
+        try
+        {
+            using var stream = Indra.GetSwapInfoStream(id, ct);
+            while (await IndraClient.TranslateCancellation(
+                       stream.ResponseStream.MoveNext(ct),
+                       ct))
+            {
+                var info = stream.ResponseStream.Current;
+                var swapId = info.Swap?.Id ?? info.ReverseSwap?.Id ?? info.ChainSwap?.Id ?? "";
+                await Response.WriteAsync($"data: {swapId}\r\r", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        { }
+        catch (Exception e)
+        {
+            logger.LogError(e, "gRPC error while streaming swap info for swap {SwapId} in store {StoreId}", id, storeId);
+        }
+    }
+
+    [HttpPost("swap/{id}/refund")]
+    public async Task<IActionResult> RefundSwap(string id, string address, string storeId)
+    {
+        if (Indra is null)
+        {
+            return RedirectSetup();
+        }
+
+        try
+        {
+            await Indra.RefundSwap(new RefundSwapRequest
+            {
+                Id = id,
+                Address = address
+            });
+            TempData[WellKnownTempData.SuccessMessage] = "Swap refunded";
+        }
+        catch (Exception e)
+        {
+            SetErrorMessage(e);
+        }
+
+        return RedirectToAction(nameof(Status), new { storeId, swapId = id });
+    }
+
+    private async Task<IndraSettings> SetStandaloneWallet(IndraSettings settings, string name)
+    {
+        var wallet = await Indra!.GetWallet(name);
+        settings.SetStandaloneWallet(wallet);
+        return settings;
+    }
+
+    [HttpPost("configuration")]
+    public async Task<IActionResult> Configuration(string storeId, IndraConfig vm, string command = "")
+    {
+        switch (command)
+        {
+            case "IndraSetChainConfig":
+                {
+                    var name = vm.Settings?.StandaloneWallet?.Name;
+                    if (name is not null)
+                    {
+                        await indraService.Set(CurrentStoreId!, await SetStandaloneWallet(Settings!, name));
+                    }
+
+                    if (vm.Chain is not null)
+                    {
+                        await SetChainConfig(vm.Chain);
+                    }
+
+                    TempData[WellKnownTempData.SuccessMessage] = "AutoSwap settings updated";
+                    break;
+                }
+        }
+
+        return RedirectToAction(nameof(Configuration), new { storeId });
+    }
+
+    [HttpGet("admin")]
+    [Authorize(Policy = Policies.CanModifyServerSettings)]
+    public async Task<IActionResult> Admin(string storeId, string? logFile, int offset = 0, bool download = false)
+    {
+        var vm = new AdminModel { ServerSettings = indraService.ServerSettings, Settings = Settings };
+
+        if (indraDaemon.AdminClient != null)
+        {
+            try
+            {
+                vm.Info = await indraDaemon.AdminClient.GetInfo();
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e, "Error connecting to Indra");
+            }
+        }
+
+        var di = Directory.GetParent(indraDaemon.LogFile);
+        if (di is null)
+        {
+            TempData[WellKnownTempData.ErrorMessage] = "Could not load log files";
+            return View(vm);
+        }
+
+        var fileName = Path.GetFileName(indraDaemon.LogFile);
+
+        // We are checking if "di" is null above yet accessing GetFiles on it, this could lead to an exception?
+        var logFiles = di.GetFiles($"{Path.GetFileNameWithoutExtension(fileName)}*{Path.GetExtension(fileName)}");
+        vm.Log.LogFileCount = logFiles.Length;
+        vm.Log.LogFiles = GetLogFilesPage(logFiles, offset);
+        vm.Log.LogFileOffset = offset;
+
+        if (string.IsNullOrEmpty(logFile))
+        {
+            vm.Log.Log = indraDaemon.RecentOutput;
+        }
+        else
+        {
+            try
+            {
+                var stream = System.IO.File.OpenRead(Path.Combine(di.FullName, logFile));
+                if (download)
+                {
+                    return new FileStreamResult(stream, "text/plain")
+                    {
+                        FileDownloadName = logFile
+                    };
+                }
+
+                vm.Log.Log = await new StreamReader(stream).ReadToEndAsync();
+            }
+            catch (Exception)
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "Could not load log file";
+            }
+        }
+
+        return View(vm);
+    }
+
+    internal static List<FileInfo> GetLogFilesPage(IEnumerable<FileInfo> logFiles, int offset)
+    {
+        return logFiles
+            .OrderByDescending(info => info.LastWriteTime)
+            .Skip(offset)
+            .Take(LogFilesPageSize)
+            .ToList();
+    }
+
+
+    [HttpPost("admin")]
+    [Authorize(Policy = Policies.CanModifyServerSettings)]
+    public async Task<IActionResult> Admin(string storeId, AdminModel vm, string command = "")
+    {
+        switch (command)
+        {
+            case "Save":
+                {
+                    if (!ModelState.IsValid)
+                    {
+                        return View(vm);
+                    }
+
+                    try
+                    {
+                        var settings = vm.ServerSettings!;
+                        await indraService.SetServerSettings(settings);
+                    }
+                    catch (Exception err)
+                    {
+                        TempData[WellKnownTempData.ErrorMessage] = err.Message;
+                        return View(vm);
+                    }
+
+                    TempData[WellKnownTempData.SuccessMessage] = "Settings updated";
+                    break;
+                }
+            case "Clear":
+                {
+                    await indraService.Set(CurrentStoreId!, null);
+                    TempData[WellKnownTempData.SuccessMessage] = "Indra plugin credentials cleared";
+                    break;
+                }
+            case "Start":
+                {
+                    indraDaemon.InitiateStart();
+                    break;
+                }
+        }
+
+        return RedirectToAction(nameof(Admin), new { storeId });
+    }
+
+    [NonAction]
+    private RedirectToActionResult RedirectSetup()
+    {
+        return RedirectToAction(nameof(SetupMode), new { storeId = CurrentStoreId });
+    }
+
+    private void SetErrorMessage(Exception e, string? prefix = null)
+    {
+        var message = e is RpcException rpc ? rpc.Status.Detail : e.Message;
+        if (!string.IsNullOrEmpty(prefix))
+        {
+            message = $"{prefix}: {message}";
+        }
+        TempData[WellKnownTempData.ErrorMessage] = message;
+    }
+
+    [HttpGet("setup")]
+    public async Task<IActionResult> SetupMode(string storeId)
+    {
+        var vm = new ModeSetup { Enabled = IsAdmin || indraService.ServerSettings.AllowTenants };
+
+        if (vm.Enabled)
+        {
+            if (!string.IsNullOrEmpty(indraDaemon.Error) && IsAdmin)
+            {
+                return RedirectToAction(nameof(Admin), new { storeId });
+            }
+
+            try
+            {
+                SetupSettings = await indraService.InitializeStore(storeId);
+            }
+            catch (Exception e)
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "Could not initialize store settings: " + e.Message;
+            }
+        }
+
+        return View("SetupStandalone", vm);
+    }
+
+    private async Task<List<ExistingWallet>> GetExistingWallets(Currency? currency = null)
+    {
+        var response = await Indra!.GetWallets(true);
+        var result = response.Wallets_.ToList()
+            .FindAll(wallet => currency is null || wallet.Currency == currency)
+            .Select(
+                wallet => new ExistingWallet
+                {
+                    Balance = wallet.Balance?.Total,
+                    IsReadonly = wallet.Readonly,
+                    Name = wallet.Name,
+                    Currency = wallet.Currency,
+                }
+            ).ToList();
+
+        if (currency != Currency.Lbtc)
+        {
+            var derivation = CurrentStore!.GetDerivationSchemeSettings(handlers, "BTC");
+            if (derivation is not null)
+            {
+                var balance = await indraService.BtcWallet.GetBalance(derivation.AccountDerivation);
+                result.Add(new ExistingWallet
+                {
+                    Name = BtcPayName,
+                    IsBtcpay = true,
+                    // even if its a hot wallet, we cant import it to boltz-client and not send properly
+                    IsReadonly = true,
+                    Currency = Currency.Btc,
+                    Balance = (ulong)(balance.Total.GetValue(indraService.BtcNetwork) *
+                                      (decimal)MoneyUnit.BTC)
+                });
+            }
+        }
+
+        return result;
+    }
+
+    [HttpGet("setup/wallet/{flow}/{currency?}")]
+    public async Task<IActionResult> SetupWallet(WalletSetup vm)
+    {
+        if (Indra != null)
+        {
+            vm.AllowCreateHot = AllowCreateHot;
+
+            vm.Currency = vm.Flow switch
+            {
+                WalletSetupFlow.Standalone => Currency.Lbtc,
+                WalletSetupFlow.Chain => Currency.Btc,
+                WalletSetupFlow.Manual => vm.Currency,
+                _ => null
+            };
+            if (vm.Currency is null)
+            {
+                return RedirectSetup();
+            }
+
+            try
+            {
+                vm.ExistingWallets = vm.Flow == WalletSetupFlow.Manual
+                    ? new()
+                    : await GetExistingWallets(vm.Currency);
+            }
+            catch (Exception e)
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "Could not fetch existing wallets: " + e.Message;
+                return RedirectSetup();
+            }
+
+            return View(vm);
+        }
+
+        return RedirectSetup();
+    }
+
+
+    [HttpPost("setup/wallet/{flow}/{currency}")]
+    public async Task<RedirectToActionResult> SetupWallet(WalletSetup vm, string storeId)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                var walletName = vm.WalletName == null || vm.WalletName == BtcPayName ? String.Empty : vm.WalletName;
+                var wallet = string.IsNullOrEmpty(walletName) ? null : await Indra.GetWallet(walletName);
+                if (wallet is { Balance: null })
+                {
+                    return RedirectToAction(nameof(SetupSubaccount), vm.GetRouteData("initialRender", true));
+                }
+
+                switch (vm.Flow)
+                {
+                    case WalletSetupFlow.Standalone:
+                        if (SetupSettings is null)
+                        {
+                            return RedirectSetup();
+                        }
+
+                        SetupSettings = await SetStandaloneWallet(SetupSettings!, walletName);
+                        await indraService.Set(CurrentStoreId!, SetupSettings);
+
+                        if (wallet!.Readonly)
+                        {
+                            return RedirectToAction(nameof(Status), new { storeId });
+                        }
+
+                        return RedirectToAction(nameof(SetupChain), new { storeId });
+                    case WalletSetupFlow.Chain:
+                        if (ChainSetup is null)
+                        {
+                            return RedirectToAction(nameof(SetupChain), new { storeId });
+                        }
+
+                        ChainSetup = new ChainConfig(ChainSetup)
+                        { ToWallet = walletName };
+                        return RedirectToAction(nameof(SetupBudget),
+                            new { storeId, swapperType = SwapperType.Chain });
+                    case WalletSetupFlow.Manual:
+                        return RedirectToAction(nameof(Configuration), new { storeId });
+                }
+            }
+            catch (Exception e)
+            {
+                TempData[WellKnownTempData.ErrorMessage] = "Could not setup wallet: " + e.Message;
+                return RedirectSetup();
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpGet("setup/wallet/{flow}/{currency}/create")]
+    public IActionResult CreateWallet(WalletSetup vm, string storeId)
+    {
+        if (Indra != null)
+        {
+            return View(vm);
+        }
+
+        return RedirectSetup();
+    }
+
+
+    [HttpGet("setup/wallet/{flow}/{currency}/subaccount")]
+    public async Task<IActionResult> SetupSubaccount(WalletSetup vm)
+    {
+        if (Indra != null)
+        {
+            if (!vm.InitialRender)
+            {
+                try
+                {
+                    var wallet = await Indra.GetWallet(vm.WalletName!);
+                    var response = await Indra.GetSubaccounts(wallet.Id);
+                    vm.Subaccounts = response.Subaccounts.ToList()
+                        .FindAll(account => account.Balance.Total > 0 || account.Type == "p2wpkh");
+                    if (vm.Subaccounts.Count == 0)
+                    {
+                        return await SetupSubaccount(vm, null);
+                    }
+                }
+                catch (Exception e)
+                {
+                    SetErrorMessage(e);
+                }
+            }
+
+            return View(vm);
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpPost("setup/wallet/{flow}/{currency}/subaccount")]
+    public async Task<IActionResult> SetupSubaccount(WalletSetup vm, ulong? subaccount)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                var wallet = await Indra.GetWallet(vm.WalletName!);
+                await Indra.SetSubaccount(wallet.Id, subaccount);
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+            }
+
+            return await SetupWallet(vm, vm.StoreId!);
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpPost("setup/wallet/{flow}/{currency}/create")]
+    public async Task<IActionResult> CreateWallet(WalletSetup vm)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                var walletParams = new WalletParams { Currency = vm.Currency ?? Currency.Lbtc, Name = vm.WalletName };
+                if (vm.ImportMethod is null)
+                {
+                    if (!AllowCreateHot)
+                    {
+                        TempData[WellKnownTempData.ErrorMessage] = "Hot wallet creation is not allowed";
+                        return RedirectToAction(nameof(CreateWallet), new { storeId = CurrentStoreId });
+                    }
+
+                    var response = await Indra.CreateWallet(walletParams);
+                    var next = await SetupWallet(vm, vm.StoreId!);
+                    return this.RedirectToRecoverySeedBackup(new RecoverySeedBackupViewModel
+                    {
+                        Mnemonic = response.Mnemonic,
+                        ReturnUrl = Url.Action(next.ActionName, next.RouteValues),
+                        IsStored = true,
+                    });
+                }
+
+                if (vm.ImportMethod == WalletImportMethod.Mnemonic && !AllowCreateHot)
+                {
+                    TempData[WellKnownTempData.ErrorMessage] = "Mnemonic import is not allowed";
+                    return RedirectToAction(nameof(CreateWallet), new { storeId = CurrentStoreId });
+                }
+
+                if (vm.WalletCredentials.CoreDescriptor is not null)
+                {
+                    var split = vm.WalletCredentials.CoreDescriptor.Split('\n');
+                    vm.WalletCredentials.CoreDescriptor = split[0].StripLineBreaks();
+                }
+
+                await Indra.ImportWallet(walletParams, vm.WalletCredentials);
+                if (string.IsNullOrEmpty(vm.WalletCredentials.Mnemonic))
+                {
+                    return await SetupWallet(vm, vm.StoreId!);
+                }
+
+                return RedirectToAction(nameof(SetupSubaccount), vm.GetRouteData("initialRender", true));
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+                return RedirectToAction(vm.ImportMethod is null ? "CreateWallet" : "ImportWallet", vm.RouteData);
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpGet("setup/wallet/{flow}/{currency}/import")]
+    public IActionResult ImportWallet(WalletSetup vm)
+    {
+        if (Indra != null)
+        {
+            vm.AllowCreateHot = AllowCreateHot;
+
+            if (vm.ImportMethod == null)
+            {
+                return View("ImportWalletOptions", vm);
+            }
+
+            return View("CreateWallet", vm);
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpGet("setup/{swapperType}/budget")]
+    public IActionResult SetupBudget(BudgetSetup vm)
+    {
+        if (Indra != null)
+        {
+            vm.Budget = 100_000;
+            vm.BudgetIntervalDays = 7;
+            vm.MaxFeePercent = 1;
+            ViewData[BackUrl] = Url.Action(nameof(SetupWallet),
+                new { storeId = CurrentStoreId, Flow = WalletSetupFlow.Chain });
+
+            return View(vm);
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpPost("setup/{swapperType}/budget")]
+    public IActionResult SetupBudget(BudgetSetup vm, string storeId)
+    {
+        if (Indra != null)
+        {
+            if (ChainSetup is null)
+            {
+                return RedirectSetup();
+            }
+
+            ChainSetup = new ChainConfig(ChainSetup)
+            {
+                Budget = vm.Budget,
+                BudgetInterval = vm.BudgetIntervalDays,
+                MaxFeePercent = vm.MaxFeePercent
+            };
+
+            return RedirectToAction(nameof(Enable), new { storeId });
+        }
+
+        return RedirectSetup();
+    }
+
+    private static ulong DaysToSeconds(ulong days)
+    {
+        return (ulong)TimeSpan.FromDays(days).TotalSeconds;
+    }
+
+    private static ulong SecondsToDays(ulong seconds)
+    {
+        return (ulong)TimeSpan.FromSeconds(seconds).TotalDays;
+    }
+
+    async Task SetChainConfig(ChainConfig config)
+    {
+        config.FromWallet = await GetChainSwapsFromWallet();
+
+        if (config is { ToWallet: "", ToAddress: "" })
+        {
+            config.ToAddress = await indraService.GenerateNewAddress(CurrentStore!);
+        }
+
+        config.BudgetInterval = DaysToSeconds(config.BudgetInterval);
+
+        await Indra!.UpdateAutoSwapChainConfig(config);
+    }
+
+    [HttpGet("setup/chain")]
+    public async Task<IActionResult> SetupChain(string storeId)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                var fromWallet = await GetChainSwapsFromWallet();
+                if (fromWallet is null)
+                {
+                    TempData[WellKnownTempData.ErrorMessage] = "No suitable wallet found for chain swaps";
+                    return RedirectToAction(nameof(Status), new { storeId });
+                }
+
+                var info = await indraService.GetPairInfo(new Pair { From = Currency.Lbtc, To = Currency.Btc }, SwapType.Chain);
+                var vm = new ChainSetup { PairInfo = info };
+                vm.MaxBalance = 10_000_000;
+                vm.ReserveBalance = 500_000;
+                ViewData[BackUrl] = Url.Action(nameof(SetupWallet),
+                    new { flow = WalletSetupFlow.Standalone, storeId });
+
+                ChainSetup = new ChainConfig { FromWallet = fromWallet };
+                return View(vm);
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+                return RedirectToAction(nameof(Status), new { storeId });
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpPost("setup/chain")]
+    public IActionResult SetupChain(ChainConfig vm, string storeId, string command)
+    {
+        if (Indra != null)
+        {
+            if (command == "Skip")
+            {
+                ChainSetup = null;
+                return RedirectToAction(nameof(Enable), new { storeId });
+            }
+
+            ChainSetup = new ChainConfig(ChainSetup)
+            {
+                MaxBalance = vm.MaxBalance,
+                ReserveBalance = vm.ReserveBalance
+            };
+            return RedirectToAction(nameof(SetupWallet),
+                new { storeId, flow = WalletSetupFlow.Chain, currency = Currency.Btc });
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpGet("setup/enable")]
+    public async Task<IActionResult> Enable(string storeId)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                if (ChainSetup is not null)
+                {
+                    await SetChainConfig(ChainSetup);
+                }
+                else
+                {
+                    await Indra.ResetChainConfig();
+                }
+
+                await indraService.Set(CurrentStoreId!, Settings);
+
+                if (await Indra.IsAutoSwapConfigured())
+                {
+                    var vm = await Indra.GetAutoSwapRecommendations();
+                    return View(vm);
+                }
+
+                return RedirectToAction(nameof(Status),
+                    new { storeId });
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+                return RedirectToAction(nameof(Configuration), new { storeId });
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+    [HttpPost("setup/enable")]
+    public async Task<IActionResult> Enable(string storeId, string command)
+    {
+        if (Indra != null)
+        {
+            try
+            {
+                if (command == "Enable")
+                {
+                    await Indra.EnableAutoSwap();
+                    TempData[WellKnownTempData.SuccessMessage] = "Auto swap enabled";
+                }
+
+                return RedirectToAction(nameof(Status),
+                    new { storeId });
+            }
+            catch (Exception e)
+            {
+                SetErrorMessage(e);
+                return RedirectToAction(nameof(Enable), new { storeId });
+            }
+        }
+
+        return RedirectSetup();
+    }
+
+
+    private async Task<string?> GetChainSwapsFromWallet()
+    {
+        if (Indra != null)
+        {
+            var name = Settings?.StandaloneWallet?.Name;
+
+            if (name != null)
+            {
+                var fromWallet = await Indra.GetWallet(name);
+                return fromWallet.Readonly || fromWallet.Currency != Currency.Lbtc ? null : name;
+            }
+        }
+
+        return null;
+    }
+}

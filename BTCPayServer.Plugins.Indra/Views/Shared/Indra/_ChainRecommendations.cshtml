@@ -1,0 +1,40 @@
+@using BTCPayServer.Plugins.Indra.Models
+@model Autoswaprpc.ChainRecommendation
+@{
+    var balance = Model.WalletBalance;
+    var stats = new List<Stat>
+    {
+        new() { Name = "Max Wallet Balance", Value = Model.MaxBalance, Unit = Unit.Sat },
+        new() { Name = "Current Balance", Value = balance.Total, Unit = Unit.Sat },
+    };
+
+    if (balance.Unconfirmed > 0)
+    {
+        stats.Add(new() { Name = "Current Unconfirmed Balance", Value = balance.Unconfirmed, Unit = Unit.Sat });
+    }
+
+    var swap = Model.Swap;
+    @if (swap is not null)
+    {
+        stats.AddRange([
+            new() { Name = "Recommended Swap Amount", Value = swap.Amount, Unit = Unit.Sat },
+            new() { Name = "Fee Estimate", Value = swap.FeeEstimate, Unit = Unit.Sat },
+        ]);
+    }
+}
+
+<div>
+    <partial name="Indra/_Stats" model="@stats"></partial>
+    @if (swap is null)
+    {
+        <div class="text-info">
+            No swap recommended
+        </div>
+    }
+    @if (swap?.DismissedReasons.Count > 0)
+    {
+        <div class="text-warning">
+            Swap is ignored, because: @string.Join(", ", swap.DismissedReasons)
+        </div>
+    }
+</div>

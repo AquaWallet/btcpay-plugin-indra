@@ -1,0 +1,38 @@
+@inject IndraService IndraService;
+@using BTCPayServer.Client
+@using BTCPayServer.Plugins.Indra
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@model BTCPayServer.Models.StoreViewModels.LightningNodeViewModel
+
+@if (Model.CryptoCode != "BTC")
+{
+    return;
+}
+
+@{
+    var lnClient = IndraService.GetLightningClient(IndraService.GetSettings(Model.StoreId));
+}
+
+@if (lnClient is null)
+{
+    <a asp-action="SetupMode" asp-controller="Indra" permission="@Policies.CanModifyStoreSettings" asp-route-storeId="@Model.StoreId" type="radio" role="tab" aria-controls="IndraSetup" aria-selected="false" name="LightningNodeType">
+        <label for="LightningNodeType-Indra">Configure Indra</label>
+    </a>
+}
+else
+{
+    <input value="Custom" type="radio" id="LightningNodeType-Indra" data-bs-toggle="pill" data-bs-target="#IndraSetup" role="tab" aria-controls="IndraSetup" aria-selected="false" name="LightningNodeType">
+    <label for="LightningNodeType-Indra">Use Indra</label>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const typePrefix = '@lnClient.ToString()';
+            const connStringEl = document.getElementById('ConnectionString')
+            delegate('change', 'input[name="LightningNodeType"]', e => {
+                const activeEl = document.querySelector('input[name="LightningNodeType"]:checked')
+                if (activeEl.id === "LightningNodeType-Indra"){
+                    connStringEl.value =typePrefix;
+                }
+            })
+        })
+    </script>
+}

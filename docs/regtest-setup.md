@@ -1,6 +1,6 @@
 ---
 description:
-  How to set up a local regtest environment for Boltz BTCPay Plugin development
+  How to set up a local regtest environment for Indra BTCPay Plugin development
   using Boltz Regtest.
 next: false
 ---
@@ -25,27 +25,27 @@ docker compose down --volumes
 ./start.sh
 ```
 
-Install the .NET SDK v8 (necessary to build the Plugin).
+Install the .NET SDK v10 (necessary to build the Plugin).
 
 Then clone this repository and build the Plugin:
 
 ```bash
-git clone https://github.com/BoltzExchange/boltz-btcpay-plugin --recurse-submodules
-cd boltz-btcpay-plugin/
+git clone https://github.com/AquaWallet/btcpay-plugin-indra --recurse-submodules
+cd btcpay-plugin-indra/
 ln --symbolic ~/path/to/regtest
 make dev
 ```
 
-You can also run the latest version of Boltz Client manually.
+You can also run the latest version of boltz-client manually.
 
 ```bash
 git clone https://github.com/BoltzExchange/boltz-client
 cd boltz-client
 make
-cp ./boltzd ./boltzcli ~/.btcpayserver/RegTest/LocalStorage/Boltz/bin/linux_amd64/
+cp ./boltzd ./boltzcli ~/.btcpayserver/RegTest/Plugins/Indra/bin/linux_amd64/
 ```
 
-The Boltz Greenfield Swagger spec is generated manually
-`BTCPayServer.Plugins.Boltz/Resources/swagger.boltz.json`. If you make changes
+The Indra Greenfield Swagger spec is generated manually
+`BTCPayServer.Plugins.Indra/Resources/swagger.indra.json`. If you make changes
 to the Greenfield API endpoints, make sure to update this file as part of the
 same change.
