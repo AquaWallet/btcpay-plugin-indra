@@ -59,7 +59,7 @@ public class IndraDaemon(
     IConfiguration configuration
 )
 {
-    private static readonly Version ClientVersion = new("2.12.6");
+    private static readonly Version ClientVersion = new("2.12.7");
     private static readonly SemaphoreSlim BinarySemaphore = new(1, 1);
     private const string ClientCacheDirSetting = "BOLTZ_CLIENT_CACHE_DIR";
     private static readonly Lazy<string> ExpectedManifest = new(() =>
