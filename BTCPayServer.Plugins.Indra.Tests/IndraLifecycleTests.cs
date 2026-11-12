@@ -156,8 +156,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
             {
                 await tester.MineLiquidBlocks();
                 info = await client.GetSwapInfo(swap.Id);
-                // The state can end as Error even though the refund went out: boltz-client's failure
-                // handler and new-block check can both refund, and the rejected duplicate sets Error
+                Assert.Equal(SwapState.Refunded, info.Swap.State);
                 Assert.False(string.IsNullOrEmpty(info.Swap.RefundTransactionId));
             }, 120_000);
 
