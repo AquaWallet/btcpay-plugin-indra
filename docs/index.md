@@ -50,10 +50,10 @@ payments arrive. If something goes wrong, open an issue on
 ## How does the plugin work under the hood?
 
 The plugin is a UI around
-[boltz-client](https://github.com/BoltzExchange/boltz-client), the swap daemon
-maintained by Boltz. On startup it downloads the pinned boltz-client release,
-checks it against the signed manifest bundled with the plugin, and runs it
-pointed at the Indra API (`https://indra.aquabtc.com`) on mainnet.
+[indra-client](https://github.com/AquaWallet/indra-client), JAN3's maintained
+fork of the boltz-client swap daemon. On startup it downloads the pinned
+indra-client release, checks it against the manifest bundled with the plugin,
+and runs it pointed at the Indra API (`https://indra.aquabtc.com`) on mainnet.
 
 The plugin also extends BTCPay's Greenfield API under
 `/api/v1/stores/{storeId}/indra/`. You can access the merged server Swagger spec

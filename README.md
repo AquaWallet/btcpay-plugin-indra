@@ -17,11 +17,11 @@ See the [docs](https://aquawallet.github.io/btcpay-plugin-indra/).
 
 ## Swap engine
 
-The plugin runs [boltz-client](https://github.com/BoltzExchange/boltz-client)
-(`boltzd`), maintained by Boltz, as its swap daemon and points it at the Indra
-API on mainnet. The plugin downloads the pinned boltz-client release from
-Boltz's GitHub releases and checks it against the embedded, signed
-`boltz-client-manifest.txt` before starting it.
+The plugin runs [indra-client](https://github.com/AquaWallet/indra-client)
+(`boltzd`), JAN3's maintained fork of boltz-client, as its swap daemon and
+points it at the Indra API on mainnet. The plugin downloads the pinned
+indra-client release from its GitHub releases and checks it against the
+embedded `boltz-client-manifest.txt` before starting it.
 
 ## Requirements
 

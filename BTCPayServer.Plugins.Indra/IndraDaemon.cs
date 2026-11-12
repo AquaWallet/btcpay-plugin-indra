@@ -59,7 +59,7 @@ public class IndraDaemon(
     IConfiguration configuration
 )
 {
-    private static readonly Version ClientVersion = new("2.12.5");
+    private static readonly Version ClientVersion = new("2.12.6");
     private static readonly SemaphoreSlim BinarySemaphore = new(1, 1);
     private const string ClientCacheDirSetting = "BOLTZ_CLIENT_CACHE_DIR";
     private static readonly Lazy<string> ExpectedManifest = new(() =>
@@ -131,7 +131,7 @@ public class IndraDaemon(
 
     private string ReleaseUrl(Version version)
     {
-        return $"https://github.com/BoltzExchange/boltz-client/releases/download/v{version}/";
+        return $"https://github.com/AquaWallet/indra-client/releases/download/v{version}/";
     }
 
     private async Task<Stream> DownloadFile(string uri, string destination)
