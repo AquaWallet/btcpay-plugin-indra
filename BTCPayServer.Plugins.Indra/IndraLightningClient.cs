@@ -207,6 +207,8 @@ public class IndraLightningClient(
             Amount = (ulong)createInvoiceRequest.Amount.MilliSatoshi / 1000,
             WalletId = walletId,
             ExternalPay = true,
+            // lets payers that hold L-BTC, like AQUA, pay the store's wallet directly on Liquid
+            AddMagicRoutingHint = true,
             Pair = new Pair { From = Currency.Btc, To = Currency.Lbtc },
             InvoiceExpiry = (ulong)createInvoiceRequest.Expiry.TotalSeconds,
         };

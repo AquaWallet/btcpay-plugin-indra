@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -23,6 +25,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
     public static class IndraTestUtils
     {
         private const string DefaultBoltzRegtestLndUrl = "https://127.0.0.1:8081/";
+        private const string DefaultBoltzRegtestApiUrl = "http://127.0.0.1:9001";
 
         private static async Task<bool> WaitForAdminClient(IndraService indraService, int timeoutSeconds)
         {
@@ -220,6 +223,39 @@ namespace BTCPayServer.Plugins.Indra.Tests
         {
             ArgumentNullException.ThrowIfNull(serverTester);
             await RunBoltzRegtestLncliCommand("cancelinvoice", paymentHash);
+        }
+
+        /// <summary>
+        /// Looks up the Liquid address and amount a payer gets for an invoice with a magic
+        /// routing hint, as AQUA does before paying it directly on Liquid
+        /// </summary>
+        public static async Task<(string Address, decimal Amount)> GetMagicRoutingHintPayment(
+            this ServerTester serverTester, string bolt11)
+        {
+            ArgumentNullException.ThrowIfNull(serverTester);
+            var apiUrl = Environment.GetEnvironmentVariable("TESTS_BOLTZ_API_URL") ?? DefaultBoltzRegtestApiUrl;
+            using var httpClient = new HttpClient();
+            using var response = await httpClient.GetAsync($"{apiUrl.TrimEnd('/')}/v2/swap/reverse/{bolt11}/bip21");
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, $"No magic routing hint for the invoice: {body}");
+
+            // liquidnetwork:<address>?amount=<L-BTC>&assetid=<id>
+            var bip21 = JObject.Parse(body)["bip21"]!.Value<string>()!;
+            var parts = bip21[(bip21.IndexOf(':') + 1)..].Split('?');
+            var amount = parts[1].Split('&').Single(p => p.StartsWith("amount="))["amount=".Length..];
+            return (parts[0], decimal.Parse(amount, CultureInfo.InvariantCulture));
+        }
+
+        public static async Task SendLiquid(this ServerTester serverTester, string address, decimal amountLbtc)
+        {
+            ArgumentNullException.ThrowIfNull(serverTester);
+            await RunBoltzScriptsCommand(
+                "elements-cli",
+                "-rpcconnect=elementsd",
+                "-rpcwallet=regtest",
+                "sendtoaddress",
+                address,
+                amountLbtc.ToString(CultureInfo.InvariantCulture));
         }
 
         public static async Task MineLiquidBlocks(this ServerTester serverTester, int count = 1)
