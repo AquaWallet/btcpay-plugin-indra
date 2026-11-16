@@ -54,6 +54,28 @@ namespace BTCPayServer.Plugins.Indra.Tests
             await AssertPaymentsReportContainsIndraData(tester, storeId, invoiceId, paymentMethodId);
         }
 
+        [Fact(Timeout = TestUtils.TestTimeout)]
+        public async Task SettlesInvoicePaidDirectlyOnLiquidThroughMagicRoutingHint()
+        {
+            using var tester = CreateServerTesterWithIndra();
+            var account = await tester.CreateTestStore();
+            await tester.SetupIndraForStore(account.StoreId);
+            var client = await account.CreateClient();
+            var invoiceId = (await client.CreateInvoice(account.StoreId, new CreateInvoiceRequest
+            {
+                Amount = 5m,
+                Currency = "USD"
+            })).Id;
+            var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId("BTC").ToString();
+            var lightningMethod = await WaitForLightningMethod(client, invoiceId, paymentMethodId);
+
+            var (address, amount) = await tester.GetMagicRoutingHintPayment(lightningMethod.Destination!);
+            await tester.SendLiquid(address, amount);
+            await tester.MineLiquidBlocks();
+
+            await AssertInvoiceSettled(client, account.StoreId, invoiceId, paymentMethodId, 60_000);
+        }
+
         internal static async Task<IndraSettlementData> AssertIndraSettlementData(
             ServerTester tester,
             string storeId,
