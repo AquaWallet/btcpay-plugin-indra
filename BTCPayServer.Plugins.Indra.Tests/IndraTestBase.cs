@@ -23,9 +23,9 @@ namespace BTCPayServer.Plugins.Indra.Tests
 {
     public class IndraTestBase : UnitTestBase
     {
-        private static readonly string SharedBoltzClientCacheDir = Path.Combine(
+        private static readonly string SharedIndraClientCacheDir = Path.Combine(
             Path.GetTempPath(),
-            "btcpayserver-boltz-client-cache");
+            "btcpayserver-indra-client-cache");
 
         public IndraTestBase(ITestOutputHelper helper) : base(helper)
         {
@@ -82,7 +82,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
 
         public ServerTester CreateServerTesterWithIndra([CallerMemberNameAttribute] string scope = null, bool newDb = true)
         {
-            ConfigureSharedBoltzClientCacheDir();
+            ConfigureSharedIndraClientCacheDir();
             var provider = CreateNetworkProviderWithIndra();
             Assert.NotNull(provider);
             Assert.NotNull(provider.GetNetwork<BTCPayNetwork>("BTC"));
@@ -91,7 +91,7 @@ namespace BTCPayServer.Plugins.Indra.Tests
 
         public PlaywrightTester CreatePlaywrightTesterWithIndra([CallerMemberNameAttribute] string scope = null, bool newDb = true)
         {
-            ConfigureSharedBoltzClientCacheDir();
+            ConfigureSharedIndraClientCacheDir();
             var tester = new PlaywrightTester
             {
                 Server = new ServerTester(scope, newDb, TestLogs, TestLogProvider, CreateNetworkProviderWithIndra())
@@ -104,9 +104,9 @@ namespace BTCPayServer.Plugins.Indra.Tests
             return tester;
         }
 
-        private static void ConfigureSharedBoltzClientCacheDir()
+        private static void ConfigureSharedIndraClientCacheDir()
         {
-            Environment.SetEnvironmentVariable("BOLTZ_CLIENT_CACHE_DIR", SharedBoltzClientCacheDir);
+            Environment.SetEnvironmentVariable("INDRA_CLIENT_CACHE_DIR", SharedIndraClientCacheDir);
         }
     }
 }

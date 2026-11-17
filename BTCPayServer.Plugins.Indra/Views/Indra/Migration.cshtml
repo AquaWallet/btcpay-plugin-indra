@@ -1,0 +1,78 @@
+@using BTCPayServer.Plugins.Indra.Views
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@model BTCPayServer.Plugins.Indra.Models.IndraMigrationModel
+@{
+    ViewData.SetActivePage(IndraNavPages.Migration, "Move to Indra");
+    var storeId = Context.GetCurrentStoreId();
+}
+
+<p>Indra has its own wallet, settings and swap history. Boltz keeps its existing files, wallets and credentials.
+    This page changes the Lightning connection used for new payments in this store.</p>
+<div asp-validation-summary="All" class="text-danger"></div>
+
+<h3>1. Prepare your wallet</h3>
+<p>Create a new Liquid wallet in Indra, or import your wallet credentials using Indra's setup.
+    Importing a wallet does not import pending swaps, refunds or payment history.</p>
+@if (Model.Ready)
+{
+    <p>Prepared wallet: <strong>@Model.WalletName</strong>.</p>
+}
+else
+{
+    <a asp-action="SetupMode" asp-route-storeId="@storeId" class="btn btn-secondary mb-3">Set up Indra</a>
+}
+
+<h3>2. Finish existing payments</h3>
+<p>Pause new checkouts and automated payouts while switching. In the current plugin, finish or expire unpaid
+    invoices and complete pending swaps, refunds and payouts. Keep that plugin installed and running until
+    recovery is complete. An offline plugin does not mean there is no pending work.</p>
+<p>Indra cannot verify Boltz's pending work. The confirmation below is your check of the current plugin.</p>
+
+<h3>3. Switch new payments</h3>
+@if (Model.Active)
+{
+    <p>New Lightning payments currently use Indra.</p>
+}
+else
+{
+    <p>@(Model.HasPreviousConnection ? "Your current Lightning connection is unchanged." : "No Lightning connection is currently configured.")</p>
+    @if (Model.Ready && (!Model.HasBackup || Model.Restored))
+    {
+        <form method="post" asp-action="Migration" asp-route-storeId="@storeId">
+            <input type="hidden" asp-for="Revision" />
+            <div class="form-check mb-3">
+                <input type="checkbox" name="ConfirmSettled" value="true" id="confirm-switch" class="form-check-input" required />
+                <label for="confirm-switch" class="form-check-label">I paused new payments and checked that the current plugin has no unfinished invoices, swaps, refunds or payouts.</label>
+            </div>
+            <button type="submit" name="command" value="switch" class="btn btn-primary">Switch to Indra</button>
+        </form>
+    }
+}
+
+<h3 class="mt-4">Switch back</h3>
+<p>The saved configuration can be restored while this store still uses the Indra connection set here.
+    First pause new payments and finish pending work in Indra. Restoring keeps both plugins' wallets and history.
+    After either switch, test a small payment before reopening checkout.</p>
+@if (Model.CanRestore)
+{
+    <form method="post" asp-action="Migration" asp-route-storeId="@storeId">
+        <input type="hidden" asp-for="Revision" />
+        <div class="form-check mb-3">
+            <input type="checkbox" name="ConfirmSettled" value="true" id="confirm-restore" class="form-check-input" required />
+            <label for="confirm-restore" class="form-check-label">I paused new payments and checked that Indra has no unfinished invoices, swaps, refunds or payouts.</label>
+        </div>
+        <button type="submit" name="command" value="restore" class="btn btn-secondary">Restore previous Lightning connection</button>
+    </form>
+}
+else if (Model.Restored)
+{
+    <p>The previous Lightning configuration has been restored. Saving Indra settings or restarting will not switch it back to Indra.</p>
+}
+else if (Model.HasBackup)
+{
+    <p>The Lightning configuration has changed since the switch. Automatic restore is unavailable so it cannot overwrite that change.</p>
+}
+else
+{
+    <p>No previous connection has been saved by this page yet.</p>
+}

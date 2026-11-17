@@ -32,6 +32,8 @@ using BTCPayServer.Services.Wallets;
 using Grpc.Core;
 using LNURL;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore;
+using BTCPayServer.Events;
 using Microsoft.Extensions.Options;
 using NBitcoin;
 using NBitcoin.Altcoins;
@@ -48,6 +50,7 @@ namespace BTCPayServer.Plugins.Indra;
 public class IndraService(
     BTCPayWalletProvider btcPayWalletProvider,
     StoreRepository storeRepository,
+    ApplicationDbContextFactory dbContextFactory,
     SettingsRepository settingsRepository,
     EventAggregator eventAggregator,
     ILogger<IndraService> logger,
@@ -65,6 +68,18 @@ public class IndraService(
     : EventHostedServiceBase(eventAggregator, logger)
 {
     private static readonly string SettingsName = "Indra";
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _storeLocks = new();
+    private SemaphoreSlim StoreLock(string storeId) => _storeLocks.GetOrAdd(storeId, _ => new SemaphoreSlim(1, 1));
+
+    public async Task<bool> IsActive(string storeId) => OwnsConnection(await storeRepository.FindStore(storeId));
+
+    private bool OwnsConnection(StoreData? store)
+    {
+        if (store is null || !IndraMigration.IsIndra(store)) return false;
+        var expected = GetLightningClient(GetSettings(store.Id))?.ToString();
+        var actual = IndraMigration.Connection(store)?.GetValue("connectionString", StringComparison.OrdinalIgnoreCase)?.Value<string>();
+        return expected is not null && string.Equals(expected, actual, StringComparison.Ordinal);
+    }
 
     private ConcurrentDictionary<string, IndraSettings> _settings = new();
     public IndraServerSettings ServerSettings { get; private set; }
@@ -104,13 +119,14 @@ public class IndraService(
 
         if (daemon.Running)
         {
-            foreach (var (storeId, settings) in _settings)
+            foreach (var (storeId, savedSettings) in _settings)
             {
+                var settings = JObject.FromObject(savedSettings).ToObject<IndraSettings>()!;
                 if (settings.GrpcUrl?.Scheme == "http")
                 {
                     settings.GrpcUrl = new UriBuilder(settings.GrpcUrl) { Scheme = "https" }.Uri;
                     settings.CertFilePath = daemon.CertFile;
-                    await Set(storeId, settings);
+                    await Set(storeId, settings, allowInactive: true);
                 }
 
                 try
@@ -157,7 +173,7 @@ public class IndraService(
         {
             logger.LogInformation(e, "Trying to generate new macaroon for store {storeId}", storeId);
             await SetMacaroon(storeId, settings);
-            await Set(storeId, settings);
+            await Set(storeId, settings, allowInactive: true);
         }
     }
 
@@ -345,7 +361,7 @@ public class IndraService(
         }
 
         _settings!.TryGetValue(storeId, out var settings);
-        return settings;
+        return settings is null ? null : JObject.FromObject(settings).ToObject<IndraSettings>();
     }
 
     public bool IsStoreReadonly(string? storeId)
@@ -470,45 +486,116 @@ public class IndraService(
         ServerSettings = settings;
     }
 
-    public async Task Set(string storeId, IndraSettings? settings)
+    // Keep the two-argument entrypoint used by already-built integrations such as SamRock.
+    public Task Set(string storeId, IndraSettings? settings) => Set(storeId, settings, allowInactive: false);
+
+    public async Task Set(string storeId, IndraSettings? settings, bool allowInactive)
     {
-        var cryptoCode = "BTC";
-        var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId(cryptoCode);
-
-        var data = await storeRepository.FindStore(storeId);
-        if (settings is null)
+        var gate = StoreLock(storeId);
+        await gate.WaitAsync();
+        try
         {
-            _settings!.Remove(storeId, out var oldSettings);
+            var store = await storeRepository.FindStore(storeId) ?? throw new InvalidOperationException("Store not found.");
+            var previousConfiguration = store.DerivationStrategies;
+            var previousBlob = store.StoreBlob;
+            var active = OwnsConnection(store);
+            var canActivate = active || (IndraMigration.Connection(store) is null && IndraMigration.Backup(store) is null);
+            if (settings?.StandaloneWallet is not null && !canActivate && !allowInactive)
+                throw new InvalidOperationException("Use Indra's Migration page to switch this store explicitly. Its current Lightning connection has not changed.");
 
-            var indraUrl = GetLightningClient(oldSettings)?.ToString();
-            var paymentMethod =
-                data?.GetPaymentMethodConfig<LightningPaymentMethodConfig>(paymentMethodId, paymentHandlers);
-            if (paymentMethod is not null && paymentMethod.GetExternalLightningUrl() == indraUrl)
+            if (settings is null)
             {
-                data!.SetPaymentMethodConfig(paymentMethodId, null);
-                await storeRepository.UpdateStore(data!);
+                if (active)
+                {
+                    store.SetPaymentMethodConfig(IndraMigration.PaymentMethod, null);
+                    await UpdateConnection(store, previousConfiguration, previousBlob);
+                }
+                await storeRepository.UpdateSetting<IndraSettings>(storeId, SettingsName, null!);
+                _settings.TryRemove(storeId, out _);
+                return;
             }
-        }
-        else
-        {
+
             await CheckSettings(settings);
             var lightningClient = GetLightningClient(settings);
-            if (lightningClient is not null)
+            if (lightningClient is not null && canActivate)
             {
                 var paymentMethod = new LightningPaymentMethodConfig();
                 paymentMethod.SetLightningUrl(lightningClient);
-
-                data!.SetPaymentMethodConfig(PaymentTypes.LN.GetPaymentMethodId("BTC"),
-                    JObject.FromObject(paymentMethod));
+                IndraMigration.RefreshActive(store, JObject.FromObject(paymentMethod));
+                await UpdateConnection(store, previousConfiguration, previousBlob);
             }
-
-            await storeRepository.UpdateStore(data!);
-            _settings[storeId] = settings;
+            await storeRepository.UpdateSetting(storeId, SettingsName, settings);
+            _settings[storeId] = JObject.FromObject(settings).ToObject<IndraSettings>()!;
         }
-
-        await storeRepository.UpdateSetting(storeId, SettingsName, settings!);
+        finally
+        {
+            gate.Release();
+        }
     }
 
+    public async Task<IndraMigrationModel> GetMigration(string storeId)
+    {
+        var store = await storeRepository.FindStore(storeId) ?? throw new InvalidOperationException("Store not found.");
+        var backup = IndraMigration.Backup(store);
+        return new IndraMigrationModel
+        {
+            Revision = IndraMigration.Revision(store),
+            Ready = GetSettings(storeId)?.StandaloneWallet is not null,
+            WalletName = GetSettings(storeId)?.StandaloneWallet?.Name,
+            Active = IndraMigration.IsIndra(store),
+            CanRestore = IndraMigration.CanRestore(store),
+            HasBackup = backup is not null,
+            Restored = backup?["restored"]?.Value<bool>() == true,
+            HasPreviousConnection = IndraMigration.Connection(store) is not null
+        };
+    }
+
+    public async Task Migrate(string storeId, string revision, bool restore)
+    {
+        var gate = StoreLock(storeId);
+        await gate.WaitAsync();
+        try
+        {
+            var store = await storeRepository.FindStore(storeId) ?? throw new InvalidOperationException("Store not found.");
+            var previousConfiguration = store.DerivationStrategies;
+            var previousBlob = store.StoreBlob;
+            if (restore)
+            {
+                // Keep the Indra daemon and wallet available for recovery; only change future payments.
+                IndraMigration.Restore(store, revision);
+            }
+            else
+            {
+                var settings = GetSettings(storeId) ?? throw new InvalidOperationException("Set up an Indra wallet first.");
+                await CheckSettings(settings);
+                if (settings.StandaloneWallet is { } wallet)
+                    await daemon.GetClient(settings)!.GetWallet(wallet.Id);
+                var client = GetLightningClient(settings) ?? throw new InvalidOperationException("Select an Indra wallet first.");
+                var paymentMethod = new LightningPaymentMethodConfig();
+                paymentMethod.SetLightningUrl(client);
+                IndraMigration.Switch(store, JObject.FromObject(paymentMethod), revision);
+            }
+            // The previous connection and the switch are written together, in the same store row.
+            await UpdateConnection(store, previousConfiguration, previousBlob);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal async Task UpdateConnection(StoreData store, string? previousConfiguration, string? previousBlob)
+    {
+        await using var context = dbContextFactory.CreateContext();
+        var updated = await context.Stores.Where(s => s.Id == store.Id &&
+                s.DerivationStrategies == previousConfiguration && s.StoreBlob == previousBlob)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(s => s.DerivationStrategies, store.DerivationStrategies)
+                .SetProperty(s => s.StoreBlob, store.StoreBlob));
+        if (updated != 1)
+            throw new InvalidOperationException("Store settings changed during the switch. Nothing was overwritten; reload and retry.");
+        eventAggregator.Publish(new StoreEvent.Updated(store));
+    }
 
     public async Task<PairInfo?> GetPairInfo(Pair pair, SwapType swapType)
     {
@@ -567,7 +654,7 @@ public class IndraService(
     private async Task ModifyLnurlpAction(StoreLNURLPayRequest data)
     {
         var settings = GetSettings(data.Store?.Id);
-        if (settings is not null)
+        if (settings is not null && OwnsConnection(data.Store))
         {
             var pairInfo = await GetPairInfo(new Pair { From = Currency.Btc, To = Currency.Lbtc }, SwapType.Reverse);
             if (pairInfo != null)
@@ -580,8 +667,10 @@ public class IndraService(
 
     private async Task BeforePayoutAction(BeforePayoutActionData data)
     {
+        if (!OwnsConnection(data.Store)) return;
         foreach (var payout in data.Payouts)
         {
+            if (payout.GetPayoutMethodId().ToString() != "BTC-LN") continue;
             // cancel 0 amount invoice
             var destination = payout.GetBlob(jsonSerializerSettings).Destination;
             if (BOLT11PaymentRequest.TryParse(destination, out var bolt11, BtcNetwork.NBitcoinNetwork))
@@ -659,6 +748,8 @@ public class IndraService(
         }
 
         var store = await storeRepository.FindStore(storeId);
+        if (!OwnsConnection(store))
+            throw new InvalidOperationException("Indra is not the active Lightning backend for this store.");
         var processor = lightningAutomatedPayoutSenderFactory.ConstructProcessor(new Data.PayoutProcessorData()
         {
             Store = store!,

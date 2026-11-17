@@ -7,5 +7,6 @@ public enum IndraNavPages
     Swaps,
     Configuration,
     Admin,
-    Wallets
+    Wallets,
+    Migration
 }

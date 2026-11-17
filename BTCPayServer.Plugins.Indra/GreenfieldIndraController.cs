@@ -42,7 +42,7 @@ public class GreenfieldIndraController(
         var settings = indraService.GetSettings(storeId);
         var response = new IndraSetupData
         {
-            Enabled = settings is not null
+            Enabled = await indraService.IsActive(storeId)
         };
 
         var client = indraService.GetClient(storeId);

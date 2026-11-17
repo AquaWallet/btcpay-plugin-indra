@@ -12,7 +12,15 @@
 
     var settings = IndraService.GetSettings(storeId);
 
+    var active = await IndraService.IsActive(storeId);
     var chainRecommendation = Model.Recommendations?.Chain.FirstOrDefault();
+}
+
+@if (settings?.StandaloneWallet is not null && !active)
+{
+    <div class="alert alert-info">This prepared Indra wallet is not used by the store's current Lightning connection.
+        <a asp-action="Migration" asp-route-storeId="@storeId">Review the migration page</a>.
+    </div>
 }
 
 @if (Model.SwapInfo != null)
