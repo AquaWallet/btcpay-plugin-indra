@@ -8,7 +8,7 @@
 @{
     var storeId = ScopeProvider.GetCurrentStoreId();
     var pages = new List<IndraNavPages> { IndraNavPages.Configuration, IndraNavPages.Swaps,
-IndraNavPages.Admin, IndraNavPages.Wallets };
+IndraNavPages.Admin, IndraNavPages.Wallets, IndraNavPages.Migration };
     if (IndraService.IsStoreReadonly(storeId))
     {
         pages.Add(IndraNavPages.Payouts);
@@ -31,7 +31,7 @@ IndraNavPages.Admin, IndraNavPages.Wallets };
             @foreach (var current in pages)
             {
                 <li class="nav-item nav-item-sub">
-                    <a permission="@(current == IndraNavPages.Admin ? Policies.CanModifyServerSettings : Policies.CanViewStoreSettings)"
+                    <a permission="@(current == IndraNavPages.Admin ? Policies.CanModifyServerSettings : current == IndraNavPages.Migration ? Policies.CanModifyStoreSettings : Policies.CanViewStoreSettings)"
                         asp-controller="Indra" asp-action="@current" asp-route-storeId="@storeId"
                         class="nav-link @ViewData.ActivePageClass(current)">
                         @current

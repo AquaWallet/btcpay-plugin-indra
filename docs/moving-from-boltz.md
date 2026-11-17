@@ -11,7 +11,7 @@ separate:
 
 - Indra has its own plugin identifier (`BTCPayServer.Plugins.Indra`), pages,
   Greenfield routes (`/indra/` instead of `/boltz/`) and settings.
-- Indra runs its own boltz-client daemon, with its data in `Plugins/Indra` and
+- Indra runs its own indra-client daemon, with its data in `Plugins/Indra` and
   its RPC on port 9102. Boltz keeps `Plugins/Boltz` and port 9002.
 - Lightning connection strings use `type=indra`, not `type=boltz`.
 
@@ -23,10 +23,24 @@ plugin, and both can be installed on the same server.
 A store can use only one Lightning backend at a time. To move a store from Boltz
 to Indra:
 
-1. Let any pending Boltz swaps finish. Check the Boltz plugin's "Swaps" page;
-   anything still pending or refundable has to be dealt with in Boltz.
-2. Install Indra, then set it up for the store, either with SamRock and AQUA or
-   manually by importing the same Liquid wallet.
-3. Indra replaces the store's Lightning connection with its own. Boltz's data
-   and wallets stay where they were, so you can switch back at any time.
-4. Once nothing on the server uses Boltz any more, you can uninstall it.
+1. Open **Indra > Migration** and prepare a Liquid wallet. Creating or importing
+   wallet credentials does not change the current Lightning connection. API and
+   SamRock setup do not replace an existing backend; complete the switch here.
+2. Pause new checkouts and automated payouts. Finish or expire old unpaid invoices,
+   and complete pending swaps, refunds and payouts in Boltz. The migration page
+   asks for your confirmation; it does not query Boltz or infer an empty queue
+   from an offline daemon.
+3. Select **Switch to Indra**. The page saves the complete previous Lightning
+   configuration before switching new payments. Test a small payment before
+   reopening checkout.
+4. To switch back, first pause payments and finish Indra's pending work, then use
+   **Restore previous Lightning connection**. If the connection was changed
+   elsewhere, the page refuses to overwrite that change. Both plugins retain
+   their wallets and history; restarting does not reactivate Indra after restore.
+
+There is no database, swap, refund or payment-history import. Wallet import only
+imports wallet credentials. Keep Boltz installed and running while any store or
+unfinished payment still needs it. The same applies to Indra after switching back.
+
+If you use a shared binary cache, configure `INDRA_CLIENT_CACHE_DIR` separately.
+Indra does not read `BOLTZ_CLIENT_CACHE_DIR`.

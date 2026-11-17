@@ -59,24 +59,24 @@ public class IndraController(
     {
         get
         {
-            var setupSettings = (string?)TempData.Peek("setupSettings");
+            var setupSettings = (string?)TempData.Peek($"Indra:{CurrentStoreId}:setupSettings");
             return String.IsNullOrEmpty(setupSettings)
                 ? null
                 : JsonConvert.DeserializeObject<IndraSettings>(setupSettings);
         }
-        set => TempData["setupSettings"] = JsonConvert.SerializeObject(value);
+        set => TempData[$"Indra:{CurrentStoreId}:setupSettings"] = JsonConvert.SerializeObject(value);
     }
 
     private ChainConfig? ChainSetup
     {
         get
         {
-            var chainConfig = (string?)TempData.Peek("chainSetup");
+            var chainConfig = (string?)TempData.Peek($"Indra:{CurrentStoreId}:chainSetup");
             return String.IsNullOrEmpty(chainConfig)
                 ? null
                 : Google.Protobuf.JsonParser.Default.Parse<ChainConfig>(chainConfig);
         }
-        set => TempData["chainSetup"] = value is null ? null : JsonFormatter.Default.Format(value);
+        set => TempData[$"Indra:{CurrentStoreId}:chainSetup"] = value is null ? null : JsonFormatter.Default.Format(value);
     }
 
     [HttpGet("")]
@@ -89,6 +89,42 @@ public class IndraController(
     {
         SetupSettings = null;
         ChainSetup = null;
+    }
+
+    [HttpGet("migration")]
+    [Authorize(Policy = Policies.CanModifyStoreSettings)]
+    public async Task<IActionResult> Migration(string storeId)
+    {
+        ClearSetup();
+        return View(await indraService.GetMigration(CurrentStoreId));
+    }
+
+    [HttpPost("migration")]
+    [Authorize(Policy = Policies.CanModifyStoreSettings)]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Migration(string storeId, IndraMigrationModel model, string command)
+    {
+        if (!model.ConfirmSettled)
+            ModelState.AddModelError(nameof(model.ConfirmSettled), "Confirm that the current backend's invoices, swaps, refunds and payouts are settled first.");
+        if (command != "switch" && command != "restore")
+            ModelState.AddModelError("", "Choose switch or restore.");
+        if (ModelState.IsValid)
+        {
+            try
+            {
+                await indraService.Migrate(CurrentStoreId, model.Revision, command == "restore");
+                TempData[WellKnownTempData.SuccessMessage] = command == "restore"
+                    ? "Previous Lightning configuration restored. Both plugins' wallets and swap history are unchanged."
+                    : "New Lightning payments now use Indra. The previous configuration is saved for rollback.";
+                return RedirectToAction(nameof(Migration), new { storeId = CurrentStoreId });
+            }
+            catch (Exception)
+            {
+                // RPC and connection errors can include credentials; never echo them into the page.
+                ModelState.AddModelError("", "Could not switch. The connection may have changed or Indra may be unavailable. Reload this page and check Indra's status before retrying.");
+            }
+        }
+        return View(await indraService.GetMigration(CurrentStoreId));
     }
 
     // GET
@@ -693,7 +729,7 @@ public class IndraController(
                     var name = vm.Settings?.StandaloneWallet?.Name;
                     if (name is not null)
                     {
-                        await indraService.Set(CurrentStoreId!, await SetStandaloneWallet(Settings!, name));
+                        await indraService.Set(CurrentStoreId!, await SetStandaloneWallet(Settings!, name), allowInactive: true);
                     }
 
                     if (vm.Chain is not null)
@@ -962,7 +998,9 @@ public class IndraController(
                         }
 
                         SetupSettings = await SetStandaloneWallet(SetupSettings!, walletName);
-                        await indraService.Set(CurrentStoreId!, SetupSettings);
+                        await indraService.Set(CurrentStoreId!, SetupSettings, allowInactive: true);
+                        if (!await indraService.IsActive(CurrentStoreId))
+                            return RedirectToAction(nameof(Migration), new { storeId });
 
                         if (wallet!.Readonly)
                         {
@@ -1268,7 +1306,7 @@ public class IndraController(
                     await Indra.ResetChainConfig();
                 }
 
-                await indraService.Set(CurrentStoreId!, Settings);
+                await indraService.Set(CurrentStoreId!, Settings, allowInactive: true);
 
                 if (await Indra.IsAutoSwapConfigured())
                 {
